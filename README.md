@@ -27,3 +27,12 @@ skipped, not guessed. Older PDFs mixing scanner bookmarks and generated outlines
 are not automatically cleaned, and no wrapper is removed by its title.
 
 Run the focused, PDF-free range checks with `node --test test-chapter-ranges.cjs`.
+
+## Citation formatting
+
+Bibliography, footnote and short display must retain the same title and contributor
+identities. Periods within personal initials are not title boundaries; numeric
+title dates are not source-page markers. Derived fields refresh with a corrected
+bibliography only while still automatically filled; manual edits remain intact.
+Run the PDF-free formatter checks with `node --test test-citation-metadata.cjs`.
+These checks do not establish fresh AI metadata-reading accuracy.

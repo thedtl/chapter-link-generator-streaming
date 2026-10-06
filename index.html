@@ -660,6 +660,7 @@
 
         let generatedParts = [];
         let autoFilledCitation = { value: '', sourceKey: '' };
+        let autoFilledDerivedCitations = { footnote: '', short: '' };
         const FALLBACK_CITATION = 'Citation needed';
         const FRONT_MATTER_PAGE_LIMIT = 12;
         const BACK_MATTER_PAGE_LIMIT = 6;
@@ -802,6 +803,7 @@
 
         function clearCitationAutoFillState() {
             autoFilledCitation = { value: '', sourceKey: '' };
+            autoFilledDerivedCitations = { footnote: '', short: '' };
         }
 
         function updateNextBookButton() {
@@ -1728,6 +1730,21 @@
 
         function splitLeadingInvertedInitialAuthor(text) {
             const cleaned = cleanCitationText(text);
+            // A complete contributor list/role ends at its own sentence boundary.
+            // Its first initial must not split the remaining names into the title.
+            const firstSentence = splitFirstCitationSentence(cleaned);
+            if (/,\s*(?:eds?|comps?|trans)\.?$/i.test(firstSentence.first)) {
+                return null;
+            }
+            const nextSentence = splitFirstCitationSentence(firstSentence.rest).first;
+            const initialThenGivenName = /^[^,]+,\s*(?:[A-Z]\.\s+)+\p{Lu}[\p{L}'’-]+$/u.test(firstSentence.first);
+            // A comma-and title followed by its imprint is not a contributor list.
+            const possibleContributorList = /,\s+(?:and|&)\s+/i.test(firstSentence.first);
+            if ((initialThenGivenName || possibleContributorList) && nextSentence && !looksLikePublicationImprint(nextSentence) &&
+                !looksLikeSeriesLine(nextSentence) && !/\blibrary\b/i.test(nextSentence) && !looksLikeEditionLine(nextSentence) &&
+                !looksLikeResponsibilityRoleLine(nextSentence) && !normalizeVolumeMarker(nextSentence) && !/^\d{4}$/.test(nextSentence)) {
+                return null;
+            }
             const match = cleaned.match(/^([\p{Lu}][\p{L}'’-]+(?:\s+[\p{Lu}][\p{L}'’-]+){0,3}),\s*(?:and\s+)?(((?:[\p{Lu}][\p{L}'’-]*\.?\s+){0,3}[A-Z]\.))\s+(.+)$/u);
             if (!match) {
                 return null;
@@ -1814,8 +1831,8 @@
         function cleanFrontMatterLine(text) {
             return String(text || '')
                 .replace(/\s+/g, ' ')
-                .replace(/\s*\((?:p(?:age)?\.?\s*)?\d+\)\s*(?=[,.;:]|$)/ig, '')
-                .replace(/\s*\[\s*(?:p(?:age)?\.?\s*)?\d+\s*\]\s*(?=[,.;:]|$)/ig, '')
+                .replace(/\s*\(p(?:age)?\.?\s*\d+\)\s*(?=[,.;:]|$)/ig, '')
+                .replace(/\s*\[\s*p(?:age)?\.?\s*\d+\s*\]\s*(?=[,.;:]|$)/ig, '')
                 .replace(/\s+([,.;:])/g, '$1')
                 .replace(/([(["'])\s+/g, '$1')
                 .replace(/\s+([)\]"'])/g, '$1')
@@ -1944,12 +1961,14 @@
                 sourceText: sourceText || document.getElementById('dropboxUrl')?.value || ''
             });
 
-            if (!footnoteInput.value.trim() && variants.footnote) {
+            if ((!footnoteInput.value.trim() || footnoteInput.value === autoFilledDerivedCitations.footnote) && variants.footnote) {
                 footnoteInput.value = variants.footnote;
+                autoFilledDerivedCitations.footnote = variants.footnote;
             }
 
-            if (!shortInput.value.trim() && variants.short) {
+            if ((!shortInput.value.trim() || shortInput.value === autoFilledDerivedCitations.short) && variants.short) {
                 shortInput.value = variants.short;
+                autoFilledDerivedCitations.short = variants.short;
             }
         }
 
@@ -3653,7 +3672,7 @@ function dtlOpenChapter(button) {
 
         document.getElementById('citation').addEventListener('change', function() {
             if (this.value.trim()) {
-                clearCitationAutoFillState();
+                autoFilledCitation = { value: '', sourceKey: '' };
                 const citation = normalizeBibliographyCitation(this.value.trim());
                 this.value = citation;
                 fillDerivedCitationFields(citation);
