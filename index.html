@@ -1730,19 +1730,10 @@
 
         function splitLeadingInvertedInitialAuthor(text) {
             const cleaned = cleanCitationText(text);
-            // A complete contributor list/role ends at its own sentence boundary.
+            // An explicit contributor role supplies the sentence boundary.
             // Its first initial must not split the remaining names into the title.
             const firstSentence = splitFirstCitationSentence(cleaned);
             if (/,\s*(?:eds?|comps?|trans)\.?$/i.test(firstSentence.first)) {
-                return null;
-            }
-            const nextSentence = splitFirstCitationSentence(firstSentence.rest).first;
-            const initialThenGivenName = /^[^,]+,\s*(?:[A-Z]\.\s+)+\p{Lu}[\p{L}'’-]+$/u.test(firstSentence.first);
-            // A comma-and title followed by its imprint is not a contributor list.
-            const possibleContributorList = /,\s+(?:and|&)\s+/i.test(firstSentence.first);
-            if ((initialThenGivenName || possibleContributorList) && nextSentence && !looksLikePublicationImprint(nextSentence) &&
-                !looksLikeSeriesLine(nextSentence) && !/\blibrary\b/i.test(nextSentence) && !looksLikeEditionLine(nextSentence) &&
-                !looksLikeResponsibilityRoleLine(nextSentence) && !normalizeVolumeMarker(nextSentence) && !/^\d{4}$/.test(nextSentence)) {
                 return null;
             }
             const match = cleaned.match(/^([\p{Lu}][\p{L}'’-]+(?:\s+[\p{Lu}][\p{L}'’-]+){0,3}),\s*(?:and\s+)?(((?:[\p{Lu}][\p{L}'’-]*\.?\s+){0,3}[A-Z]\.))\s+(.+)$/u);

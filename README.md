@@ -35,4 +35,6 @@ identities. Periods within personal initials are not title boundaries; numeric
 title dates are not source-page markers. Derived fields refresh with a corrected
 bibliography only while still automatically filled; manual edits remain intact.
 Run the PDF-free formatter checks with `node --test test-citation-metadata.cjs`.
+An explicit editor/translator role supplies a name/title boundary. Unmarked,
+ambiguous names still need review; comma-and phrases alone cannot establish it.
 These checks do not establish fresh AI metadata-reading accuracy.

@@ -41,9 +41,9 @@ test('complete editor names, dated title, and series volume survive all citation
     assert.match(c.formatCitationHtml(reportedBibliography), /<em>Journal and Diaries II \(1738–43\)<\/em>/);
 });
 
-test('initials do not cut off complete given names, author lists, or single-editor roles', () => {
+test('explicit contributor roles keep complete names together before the title', () => {
     const { context: c } = formatter();
-    for (const author of ['Ward, W. Reginald', 'Smith, J. Paul', 'Smith, J. Paul, and Mary Jones', 'Smith, J. Paul, ed']) {
+    for (const author of ['Ward, W. Reginald, ed', 'Smith, J. Paul, trans', 'Smith, J. Paul, and Mary Jones, eds', 'Smith, J. Paul, comp']) {
         const bibliography = `${author}. Collected Letters (1848). London: Example Press, 1990.`;
         const parts = c.parseBibliographyCitation(bibliography);
         assert.equal(parts.authorText, author);
@@ -67,11 +67,11 @@ test('authors ending in initials keep the existing boundary handling', () => {
     }
 });
 
-test('comma-and title lists are not absorbed into authors ending in initials', () => {
+test('titles followed by publication details are not absorbed into authors ending in initials', () => {
     const { context: c } = formatter();
     for (const author of ['Smith, J.', 'Smith, John R.']) {
-        for (const title of ['Faith, Hope, and Love', 'Reading, Writing, and Learning']) {
-            for (const details of ['', 'Vol. 2. ', '2nd ed. ', 'Example Library 3. ']) {
+        for (const title of ['Faith, Hope, and Love', 'Reading, Writing, and Learning', 'Miracles']) {
+            for (const details of ['', 'Vol. 2. ', '2nd ed. ', 'Example Library 3. ', 'Studies in Theology 3. ']) {
                 const bibliography = `${author} ${title}. ${details}London: Example Press, 1990.`;
                 const parts = c.parseBibliographyCitation(bibliography);
                 assert.equal(parts.authorText, author);
