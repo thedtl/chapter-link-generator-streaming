@@ -109,3 +109,58 @@ test('bibliography edits refresh automatic variants while preserving manual vari
     assert.equal(fields.footnoteCitation.value, 'My edited footnote');
     assert.equal(fields.shortCitation.value, 'My edited display line');
 });
+
+test('existing metadata read carries multi-volume work label to signed chapter filenames only', async () => {
+    const { context: c, fields } = formatter();
+    let reads = 0;
+    c.showStatus = c.showCitationNote = () => {};
+    c.getCitationPageNumbers = () => [1, 2];
+    c.extractFrontMatterLines = async () => [];
+    c.renderFrontMatterImages = async () => [];
+    c.requestHeadingSuggestion = async () => {
+        reads++;
+        return { heading: reportedBibliography, source: 'ai',
+            downloadVolume: { title: 'The Works of John Wesley', designation: 'Volume 19' } };
+    };
+    await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book-19');
+    assert.equal(reads, 1);
+    assert.equal(fields.downloadPrefix.value, 'Volume 19 — The Works of John Wesley');
+    const chapter = { title: 'Introduction', start: 8, end: 14 };
+    assert.equal(JSON.stringify(c.chapterSigningRecords([chapter])), JSON.stringify([{
+        ...chapter, filename: 'Volume 19 — The Works of John Wesley — Introduction.pdf'
+    }]));
+    assert.equal(fields.citation.value, reportedBibliography);
+    assert.match(html, /chapters: chapterSigningRecords\(chapters\),\s*download: false/);
+});
+
+test('publisher series, unknown volume and ordinary books keep their old filename behavior', () => {
+    const { context: c } = formatter();
+    const chapter = { title: 'Reading in Context', start: 5, end: 20 };
+    for (const volume of [null, undefined, {}, { title: 'A Work' }, { designation: 'Volume 3' }]) {
+        c.fillDownloadPrefix(volume);
+        assert.equal(JSON.stringify(c.chapterSigningRecords([chapter])), JSON.stringify([chapter]));
+    }
+    // A publisher series in the citation/source is not a multi-volume work observation.
+    c.fillDerivedCitationFields('Smith, John. A Distinct Book. WUNT, vol. 300. London: Press, 2020.', 'WUNT-Volume-300.pdf');
+    assert.equal(JSON.stringify(c.chapterSigningRecords([chapter])), JSON.stringify([chapter]));
+});
+
+test('manual download labels survive the same book but cannot carry into the next one', () => {
+    const { context: c, fields } = formatter();
+    c.prepareDownloadPrefix('book-19');
+    c.fillDownloadPrefix({ title: 'Collected Works', designation: 'Tome XIX' });
+    assert.equal(fields.downloadPrefix.value, 'Tome XIX — Collected Works');
+    fields.downloadPrefix.value = '';
+    c.fillDownloadPrefix({ title: 'Collected Works', designation: 'Tome XIX' });
+    assert.equal(fields.downloadPrefix.value, '', 'clearing the label is a manual opt-out');
+    fields.downloadPrefix.value = 'My chosen volume label';
+    c.prepareDownloadPrefix('book-19');
+    c.fillDownloadPrefix({ title: 'Another suggestion', designation: 'Volume 19' });
+    assert.equal(fields.downloadPrefix.value, 'My chosen volume label');
+    c.prepareDownloadPrefix('different-book');
+    assert.equal(fields.downloadPrefix.value, '');
+    c.fillDownloadPrefix({ title: '전집', designation: '제2권' });
+    assert.equal(fields.downloadPrefix.value, '제2권 — 전집');
+    c.clearCitationAutoFillState();
+    assert.equal(fields.downloadPrefix.value, '');
+});

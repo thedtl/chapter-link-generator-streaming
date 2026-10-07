@@ -38,3 +38,22 @@ Run the PDF-free formatter checks with `node --test test-citation-metadata.cjs`.
 An explicit editor/translator role supplies a name/title boundary. Unmarked,
 ambiguous names still need review; comma-and phrases alone cannot establish it.
 These checks do not establish fresh AI metadata-reading accuracy.
+
+## Chapter PDF filenames
+
+For volumes of the same multi-volume work (for example, Wesley's collected
+works), the existing metadata scan observes the common work title and this
+volume's designation. The editable filename label produces names such as
+`Volume 19 — The Works of John Wesley — Introduction.pdf`. Volume leads so it
+survives shortening an unusually long filename. Publisher-series
+numbers on distinct books (for example WUNT) do not qualify. Missing observations
+leave the label empty; do not guess from the source filename or bibliography.
+The label resets for the next book; manual changes remain for the same book.
+
+Only newly generated chapter tokens carry this optional filename. Existing links,
+citation fields, chapter labels/ranges and Dropbox originals are unchanged.
+The label does not grant downloads: the generator still signs no-download patron
+links, and the reader keeps those restrictions. Where saving is allowed, PDF.js
+uses the Worker's filename header. Publishing this change requires both the
+streaming Worker and this generator; neither ToC service nor the original reader
+is involved. Offline tests cover the handoff, not fresh model-reading accuracy.

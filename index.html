@@ -603,6 +603,9 @@
                     </div>
                     <input type="text" id="shortCitation" placeholder="Auto-filled from the bibliography entry">
                     <div class="field-note" style="display: block;">Only the bibliography entry is used in the generated HTML. The other lines are for copy/paste.</div>
+                    <label for="downloadPrefix">Multi-volume work label for chapter PDF filenames</label>
+                    <input type="text" id="downloadPrefix" placeholder="e.g. Volume 19 — The Works of John Wesley">
+                    <div class="field-note" style="display: block;">Filled only for volumes of the same work, not publisher series such as WUNT. Review or clear this label; the chapter title follows it. This does not enable patron downloads.</div>
                     <div class="next-book-row">
                         <button type="button" id="startNextBookButton" class="btn-next-book" onclick="startNextBook()" title="Clear this book's fields and keep the password" disabled>Start Next Book</button>
                     </div>
@@ -661,6 +664,7 @@
         let generatedParts = [];
         let autoFilledCitation = { value: '', sourceKey: '' };
         let autoFilledDerivedCitations = { footnote: '', short: '' };
+        let downloadPrefixState = { sourceKey: '', value: '' };
         const FALLBACK_CITATION = 'Citation needed';
         const FRONT_MATTER_PAGE_LIMIT = 12;
         const BACK_MATTER_PAGE_LIMIT = 6;
@@ -743,6 +747,7 @@
 
                 return {
                     heading: String(data.heading || '').trim(),
+                    downloadVolume: data.downloadVolume || null,
                     source: data.source || 'worker',
                     note: data.note || ''
                 };
@@ -753,6 +758,7 @@
         }
 
         async function fillCitationFromPdfIfNeeded(pdf, staffPassword, sourceKey = '') {
+            prepareDownloadPrefix(sourceKey);
             const citationInput = document.getElementById('citation');
             const existingCitation = citationInput.value.trim();
             const isExistingAutoFill = existingCitation &&
@@ -782,6 +788,7 @@
                     citationInput.value = citation;
                     markCitationAutoFilled(citation, sourceKey);
                     fillDerivedCitationFields(citation, sourceKey);
+                    fillDownloadPrefix(workerSuggestion.downloadVolume);
                     showCitationNote('Citation filled from PDF. Please review it in the generated preview.', 'success');
                     return citation;
                 }
@@ -804,6 +811,33 @@
         function clearCitationAutoFillState() {
             autoFilledCitation = { value: '', sourceKey: '' };
             autoFilledDerivedCitations = { footnote: '', short: '' };
+            downloadPrefixState = { sourceKey: '', value: '' };
+            document.getElementById('downloadPrefix').value = '';
+        }
+
+        function prepareDownloadPrefix(sourceKey) {
+            if (downloadPrefixState.sourceKey && downloadPrefixState.sourceKey !== sourceKey) {
+                document.getElementById('downloadPrefix').value = '';
+                downloadPrefixState.value = '';
+            }
+            downloadPrefixState.sourceKey = sourceKey;
+        }
+
+        function fillDownloadPrefix(volume) {
+            const input = document.getElementById('downloadPrefix');
+            if (input.value !== downloadPrefixState.value) return;
+            const title = typeof volume?.title === 'string' ? volume.title.trim() : '';
+            const designation = typeof volume?.designation === 'string' ? volume.designation.trim() : '';
+            input.value = title && designation ? `${designation} — ${title}` : '';
+            downloadPrefixState.value = input.value;
+        }
+
+        function chapterSigningRecords(chapters) {
+            const prefix = document.getElementById('downloadPrefix').value.trim();
+            return chapters.map(ch => ({
+                title: ch.title, start: ch.start, end: ch.end,
+                ...(prefix ? { filename: `${prefix} — ${ch.title}.pdf` } : {})
+            }));
         }
 
         function updateNextBookButton() {
@@ -901,11 +935,7 @@
                     body: JSON.stringify({
                         password: staffPassword,
                         dropbox: dropboxUrl,
-                        chapters: chapters.map(ch => ({
-                            title: ch.title,
-                            start: ch.start,
-                            end: ch.end
-                        })),
+                        chapters: chapterSigningRecords(chapters),
                         download: false
                     })
                 });
