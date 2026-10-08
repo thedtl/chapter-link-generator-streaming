@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 // Run the shipped formatting functions without a browser, network, or PDF read.
 const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-const source = html.slice(html.indexOf('        const WORKER_URL'), html.lastIndexOf('</script>'));
+const source = html.slice(html.indexOf('        const VIEWER_URL'), html.lastIndexOf('</script>'));
 function formatter() {
     const fields = {};
     const document = {
@@ -39,6 +39,21 @@ test('complete editor names, dated title, and series volume survive all citation
     assert.equal(variants.footnote, 'W. Reginald Ward and Richard P. Heitzenrater, eds., Journal and Diaries II (1738–43), The Bicentennial Edition of the Works of John Wesley, vol. 19 (Nashville: Abingdon Press, 1990).');
     assert.equal(variants.short, 'Ward, W. Reginald, and Richard P. Heitzenrater, eds. Journal and Diaries II (1738–43), vol. 19');
     assert.match(c.formatCitationHtml(reportedBibliography), /<em>Journal and Diaries II \(1738–43\)<\/em>/);
+});
+
+test('edited-book title, subtitle and both editors survive all three display lines', () => {
+    // Reviewer transcription from God Who Creates PDF 3–4, not fresh AI output.
+    const { context: c } = formatter();
+    const citation = 'Brown, William P., and S. Dean McBride Jr., eds. God Who Creates: Essays in Honor of W. Sibley Towner. Grand Rapids: William B. Eerdmans Publishing Company, 2000.';
+    const bibliography = c.normalizeBibliographyCitation(citation);
+    const { footnote, short } = c.buildCitationVariantsFromBibliography(bibliography);
+    for (const display of [bibliography, footnote, short]) {
+        assert.match(display, /God Who Creates: Essays in Honor of W\. Sibley Towner/);
+        assert.match(display, /Brown/);
+        assert.match(display, /S\. Dean McBride Jr/);
+        assert.doesNotMatch(display, /BBovx|1989|Edited by\./);
+    }
+    assert.match(footnote, /^William P\. Brown and S\. Dean McBride Jr\., eds\.,/);
 });
 
 test('explicit contributor roles keep complete names together before the title', () => {
@@ -113,7 +128,9 @@ test('bibliography edits refresh automatic variants while preserving manual vari
 test('existing metadata read carries multi-volume work label to signed chapter filenames only', async () => {
     const { context: c, fields } = formatter();
     let reads = 0;
-    c.showStatus = c.showCitationNote = () => {};
+    const notes = [];
+    c.showStatus = () => {};
+    c.showCitationNote = (message, type) => notes.push({ message, type });
     c.getCitationPageNumbers = () => [1, 2];
     c.extractFrontMatterLines = async () => [];
     c.renderFrontMatterImages = async () => [];
@@ -130,7 +147,69 @@ test('existing metadata read carries multi-volume work label to signed chapter f
         ...chapter, filename: 'Volume 19 — The Works of John Wesley — Introduction.pdf'
     }]));
     assert.equal(fields.citation.value, reportedBibliography);
+    assert.equal(fields.footnoteCitation.value, c.buildCitationVariantsFromBibliography(reportedBibliography).footnote);
+    assert.equal(fields.shortCitation.value, c.buildCitationVariantsFromBibliography(reportedBibliography).short);
+    assert.match(notes.at(-1).message, /page images/);
+    assert.equal(notes.at(-1).type, 'success');
     assert.match(html, /chapters: chapterSigningRecords\(chapters\),\s*download: false/);
+});
+
+test('unavailable or non-AI scans cannot silently become text-layer citations', async () => {
+    const garbled = 'BBovx, P. Creates. Edited by. S. E., Grand RaPids: o Wm. B. Eerdmans Publishing Co, 1989.';
+    for (const response of [
+        { source: 'heuristic', heading: garbled },
+        { source: 'none', heading: '' },
+        { source: 'unavailable', heading: '', note: 'Metadata service unavailable.' },
+        { source: 'worker', heading: garbled },
+        { heading: garbled },
+        { source: 'ai', heading: '' }
+    ]) {
+        const { context: c, fields } = formatter();
+        const notes = [];
+        c.showStatus = () => {};
+        c.showCitationNote = (message, type) => notes.push({ message, type });
+        c.getCitationPageNumbers = () => [1];
+        c.extractFrontMatterLines = async () => [{ text: garbled, pageNumber: 1, fontSize: 24 }];
+        c.renderFrontMatterImages = async () => [];
+        c.requestHeadingSuggestion = async () => response;
+        const citation = await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'source-book');
+        assert.equal(citation, 'Citation needed', JSON.stringify(response));
+        assert.equal(fields.citation.value, citation);
+        assert.equal(notes.at(-1).type, 'error');
+        assert.match(notes.at(-1).message, /Chapter links will still be generated/);
+        assert.match(notes.at(-1).message, /enter or correct the citation fields/);
+        const parts = c.splitIntoParts(citation, [{ title: 'Chapter', start: 1, end: 2 }], [{ token: 'synthetic-token' }]);
+        assert.equal(parts.length, 1);
+        assert.match(parts[0].html, /synthetic-token/);
+        assert.doesNotMatch(parts[0].html, /BBovx/);
+    }
+});
+
+test('network and Worker errors return an explicit unavailable scan, not guessed metadata', async () => {
+    const { context: c } = formatter();
+    for (const fetch of [
+        async () => { throw new Error('offline'); },
+        async () => ({ ok: false, json: async () => ({ error: 'unavailable' }) })
+    ]) {
+        c.fetch = fetch;
+        const result = await c.requestHeadingSuggestion('synthetic-password', [], []);
+        assert.equal(result.source, 'unavailable');
+        assert.equal(result.heading, '');
+        assert.match(result.note, /could not be reached or returned an error/);
+    }
+});
+
+test('manual bibliography and derived-field edits bypass the scan and remain usable', async () => {
+    const { context: c, fields } = formatter();
+    c.showCitationNote = () => {};
+    c.requestHeadingSuggestion = async () => assert.fail('must not scan over manual metadata');
+    fields.citation.value = reportedBibliography;
+    c.document.getElementById('footnoteCitation').value = 'My footnote';
+    c.document.getElementById('shortCitation').value = 'My short display';
+    assert.equal(await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book'), reportedBibliography);
+    assert.equal(fields.citation.value, reportedBibliography);
+    assert.equal(fields.footnoteCitation.value, 'My footnote');
+    assert.equal(fields.shortCitation.value, 'My short display');
 });
 
 test('publisher series, unknown volume and ordinary books keep their old filename behavior', () => {

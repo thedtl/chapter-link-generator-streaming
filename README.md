@@ -39,6 +39,11 @@ An explicit editor/translator role supplies a name/title boundary. Unmarked,
 ambiguous names still need review; comma-and phrases alone cannot establish it.
 These checks do not establish fresh AI metadata-reading accuracy.
 
+Only an AI metadata response may auto-fill the citation. Missing, failed or
+legacy heuristic responses leave a visible warning and editable metadata;
+chapter-link generation still works. The browser no longer assembles a guessed
+citation from a PDF's potentially garbled hidden text layer.
+
 ## Chapter PDF filenames
 
 For volumes of the same multi-volume work (for example, Wesley's collected
