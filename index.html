@@ -603,9 +603,6 @@
                     </div>
                     <input type="text" id="shortCitation" placeholder="Auto-filled from the bibliography entry">
                     <div class="field-note" style="display: block;">Only the bibliography entry is used in the generated HTML. The other lines are for copy/paste.</div>
-                    <label for="downloadPrefix">Multi-volume work label for chapter PDF filenames</label>
-                    <input type="text" id="downloadPrefix" placeholder="e.g. Volume 19 — The Works of John Wesley">
-                    <div class="field-note" style="display: block;">Filled only for volumes of the same work, not publisher series such as WUNT. Review or clear this label; the chapter title follows it. This does not enable patron downloads.</div>
                     <div class="next-book-row">
                         <button type="button" id="startNextBookButton" class="btn-next-book" onclick="startNextBook()" title="Clear this book's fields and keep the password" disabled>Start Next Book</button>
                     </div>
@@ -664,7 +661,6 @@
         let generatedParts = [];
         let autoFilledCitation = { value: '', sourceKey: '' };
         let autoFilledDerivedCitations = { footnote: '', short: '' };
-        let downloadPrefixState = { sourceKey: '', value: '' };
         const FALLBACK_CITATION = 'Citation needed';
         const FRONT_MATTER_PAGE_LIMIT = 12;
         const BACK_MATTER_PAGE_LIMIT = 6;
@@ -747,7 +743,6 @@
 
                 return {
                     heading: String(data.heading || '').trim(),
-                    downloadVolume: data.downloadVolume || null,
                     source: data.source || 'worker',
                     note: data.note || ''
                 };
@@ -758,7 +753,6 @@
         }
 
         async function fillCitationFromPdfIfNeeded(pdf, staffPassword, sourceKey = '') {
-            prepareDownloadPrefix(sourceKey);
             const citationInput = document.getElementById('citation');
             const existingCitation = citationInput.value.trim();
             const isExistingAutoFill = existingCitation &&
@@ -768,7 +762,7 @@
             if (existingCitation && !isExistingAutoFill) {
                 const citation = normalizeBibliographyCitation(existingCitation);
                 citationInput.value = citation;
-                fillDerivedCitationFields(citation, sourceKey);
+                fillDerivedCitationFields(citation);
                 showCitationNote('');
                 return citation;
             }
@@ -788,8 +782,7 @@
                     const citation = normalizeAutoFilledCitation(suggestion);
                     citationInput.value = citation;
                     markCitationAutoFilled(citation, sourceKey);
-                    fillDerivedCitationFields(citation, sourceKey);
-                    fillDownloadPrefix(workerSuggestion.downloadVolume);
+                    fillDerivedCitationFields(citation);
                     showCitationNote('Citation read from the page images. Please review all metadata fields before using the generated links.', 'success');
                     return citation;
                 }
@@ -814,32 +807,11 @@
         function clearCitationAutoFillState() {
             autoFilledCitation = { value: '', sourceKey: '' };
             autoFilledDerivedCitations = { footnote: '', short: '' };
-            downloadPrefixState = { sourceKey: '', value: '' };
-            document.getElementById('downloadPrefix').value = '';
-        }
-
-        function prepareDownloadPrefix(sourceKey) {
-            if (downloadPrefixState.sourceKey && downloadPrefixState.sourceKey !== sourceKey) {
-                document.getElementById('downloadPrefix').value = '';
-                downloadPrefixState.value = '';
-            }
-            downloadPrefixState.sourceKey = sourceKey;
-        }
-
-        function fillDownloadPrefix(volume) {
-            const input = document.getElementById('downloadPrefix');
-            if (input.value !== downloadPrefixState.value) return;
-            const title = typeof volume?.title === 'string' ? volume.title.trim() : '';
-            const designation = typeof volume?.designation === 'string' ? volume.designation.trim() : '';
-            input.value = title && designation ? `${designation} — ${title}` : '';
-            downloadPrefixState.value = input.value;
         }
 
         function chapterSigningRecords(chapters) {
-            const prefix = document.getElementById('downloadPrefix').value.trim();
             return chapters.map(ch => ({
-                title: ch.title, start: ch.start, end: ch.end,
-                ...(prefix ? { filename: `${prefix} — ${ch.title}.pdf` } : {})
+                title: ch.title, start: ch.start, end: ch.end
             }));
         }
 
@@ -1413,12 +1385,10 @@
             return normalizeFormalBookPublication(cleaned);
         }
 
-        function fillDerivedCitationFields(bibliography, sourceText = '') {
+        function fillDerivedCitationFields(bibliography) {
             const footnoteInput = document.getElementById('footnoteCitation');
             const shortInput = document.getElementById('shortCitation');
-            const variants = buildCitationVariantsFromBibliography(bibliography, {
-                sourceText: sourceText || document.getElementById('dropboxUrl')?.value || ''
-            });
+            const variants = buildCitationVariantsFromBibliography(bibliography);
 
             if ((!footnoteInput.value.trim() || footnoteInput.value === autoFilledDerivedCitations.footnote) && variants.footnote) {
                 footnoteInput.value = variants.footnote;
@@ -1431,7 +1401,7 @@
             }
         }
 
-        function buildCitationVariantsFromBibliography(bibliography, options = {}) {
+        function buildCitationVariantsFromBibliography(bibliography) {
             if (bibliography === FALLBACK_CITATION) {
                 return { footnote: FALLBACK_CITATION, short: FALLBACK_CITATION };
             }
@@ -1457,7 +1427,7 @@
                 titleAndImprint
             ].filter(Boolean).join(', ') + '.';
             const shortAuthors = formatShortDisplayCreators(parts.authorText);
-            const shortTitle = formatShortDisplayTitle(parts.titleText || '', footnotePublication.details, options.sourceText || '');
+            const shortTitle = formatShortDisplayTitle(parts.titleText || '', footnotePublication.details);
             const short = [shortAuthors, shortTitle].filter(Boolean).join('. ');
 
             return {
@@ -1500,6 +1470,9 @@
             }
 
             cleaned = normalizeFormalEditionDetail(cleaned);
+            if (style === 'bibliography') {
+                cleaned = cleaned.replace(/^(rev\.|expanded|updated)(?= ed\.)/, word => word[0].toUpperCase() + word.slice(1));
+            }
             cleaned = normalizeFormalVolumeDetail(cleaned, style);
             cleaned = normalizeSpecialEditionVolumeDetail(cleaned);
 
@@ -1522,7 +1495,7 @@
 
         function normalizeFormalEditionDetail(text) {
             return cleanCitationText(text)
-                .replace(/\brev\.?\s+ed\.?\b/gi, 'rev. ed.')
+                .replace(/\b(?:revised|rev\.?)\s+(?:edition|ed\.?)(?=$|[\s,;:)])/gi, 'rev. ed.')
                 .replace(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth)\s+edition\b/gi, (match, word) => {
                     const number = EDITION_ORDINAL_WORDS[word.toLocaleLowerCase('en')];
                     return number ? `${number}${ordinalNumberSuffix(number)} ed.` : match;
@@ -1530,19 +1503,24 @@
                 .replace(/\b([0-9]+)(?:st|nd|rd|th)?\s+edition\b/gi, (match, number) => {
                     return `${number}${ordinalNumberSuffix(number)} ed.`;
                 })
+                .replace(/\b(anniversary|expanded|updated)\s+(?:edition|ed\.?)(?=$|[\s,;:)])/gi, (match, qualifier) => `${qualifier.toLocaleLowerCase('en')} ed.`)
                 .replace(/\b([0-9]+)(st|nd|rd|th)\s+ed\.?(?=$|[\s,;:)])/gi, (match, number, suffix) => `${number}${suffix.toLocaleLowerCase('en')} ed.`);
         }
 
+        // One grammar for observed volume designations in every citation display.
+        // Letters are optional and must survive; a missing volume is never supplied.
+        const VOLUME_NUMBER_SOURCE = String.raw`(?:[0-9]+[a-z]*(?:[–-][0-9]+[a-z]*)?|[ivxlcdm]+|[a-z]+(?:[-\s][a-z]+)?)`;
+
         function normalizeFormalVolumeDetail(text, style = 'bibliography') {
             let cleaned = cleanCitationText(text)
-                .replace(/\b([0-9]+)\s+vols?\.?\b/gi, (match, number) => `${number} vols.`);
+                .replace(/\b([0-9]+)\s+vols?\.?(?=$|[\s,;:)])/gi, (match, number) => `${number} vols.`);
 
-            cleaned = cleaned.replace(/\bvol(?:ume)?\.?\s+([0-9]+|[ivxlcdm]+|[a-z]+(?:[-\s][a-z]+)?)\s*:\s*([^,.;]+)/gi, (match, number, volumeTitle, offset) => {
+            cleaned = cleaned.replace(new RegExp(String.raw`\bvol(?:ume)?\.?\s+(${VOLUME_NUMBER_SOURCE})\s*:\s*([^,.;]+)`, 'gi'), (match, number, volumeTitle, offset) => {
                 const marker = normalizeVolumeMarker(`volume ${number}`);
                 return marker ? `${formatFormalVolumeMarker(marker, style, offset === 0)}, ${formatCitationTitle(volumeTitle)}` : match;
             });
 
-            cleaned = cleaned.replace(/\bvol(?:ume)?\.?\s+([0-9]+|[ivxlcdm]+|[a-z]+(?:[-\s][a-z]+)?)\b/gi, (match, _number, offset) => {
+            cleaned = cleaned.replace(new RegExp(String.raw`\bvol(?:ume)?\.?\s+(${VOLUME_NUMBER_SOURCE})(?![\p{L}\p{N}–-])`, 'giu'), (match, _number, offset) => {
                 const marker = normalizeVolumeMarker(match);
                 return marker ? formatFormalVolumeMarker(marker, style, offset === 0) : match;
             });
@@ -1773,7 +1751,7 @@
             }, '');
         }
 
-        function formatShortDisplayTitle(title, details = '', sourceText = '') {
+        function formatShortDisplayTitle(title, details = '') {
             const titleVolumeDetail = extractTitleEmbeddedVolumeDetail(title);
             const titleForVolume = titleVolumeDetail.title || title;
             const detailVolumeTitle = titleVolumeDetail.marker
@@ -1781,8 +1759,7 @@
                 : extractShortDisplayVolumeTitleDetail(details);
             const titleVolume = extractTrailingVolumeMarker(titleForVolume);
             const detailsVolume = detailVolumeTitle.marker || findVolumeMarkerInDetails(details);
-            const sourceVolume = findVolumeMarkerInSourceText(sourceText);
-            const volumeMarker = titleVolume.marker || detailsVolume || sourceVolume;
+            const volumeMarker = titleVolume.marker || detailsVolume;
             const baseTitle = titleVolume.title || titleForVolume;
             const baseTitleWithVolumeTitle = detailVolumeTitle.volumeTitle
                 ? cleanCitationText(`${baseTitle}: ${detailVolumeTitle.volumeTitle}`)
@@ -1855,7 +1832,7 @@
 
         function extractTrailingVolumeMarker(text) {
             const cleaned = trimTerminalPunctuation(cleanCitationText(text));
-            const match = cleaned.match(/^(.*?)\s*(?:[,;:]?\s+|[,;:]\s*)(vol(?:ume)?\.?)\s+([0-9]+|[ivxlcdm]+|[a-z]+(?:[-\s][a-z]+)?)$/i);
+            const match = cleaned.match(new RegExp(String.raw`^(.*?)\s*(?:[,;:]?\s+|[,;:]\s*)(vol(?:ume)?\.?)\s+(${VOLUME_NUMBER_SOURCE})$`, 'i'));
             if (!match) {
                 return { title: cleaned, marker: '' };
             }
@@ -1887,8 +1864,7 @@
 
         function extractTitleEmbeddedVolumeDetail(title) {
             const cleaned = trimTerminalPunctuation(cleanCitationText(title));
-            const writtenNumbers = Object.keys(WRITTEN_VOLUME_NUMBERS).join('|');
-            const match = cleaned.match(new RegExp(`^(.*?)\\s*:\\s*vol(?:ume)?\\.?\\s+([0-9]+|[ivxlcdm]+|${writtenNumbers}|[a-z]+[-\\s][a-z]+)\\s*,\\s*(.+)$`, 'i'));
+            const match = cleaned.match(new RegExp(String.raw`^(.*?)\s*:\s*vol(?:ume)?\.?\s+(${VOLUME_NUMBER_SOURCE})\s*,\s*(.+)$`, 'i'));
             if (!match) {
                 return { title: cleaned, marker: '', volumeTitle: '', detail: '' };
             }
@@ -1910,8 +1886,7 @@
 
         function extractLeadingVolumeTitleDetail(text) {
             const cleaned = trimTerminalPunctuation(cleanCitationText(text));
-            const writtenNumbers = Object.keys(WRITTEN_VOLUME_NUMBERS).join('|');
-            const match = cleaned.match(new RegExp(`^vol(?:ume)?\\.?\\s+([0-9]+|[ivxlcdm]+|${writtenNumbers}|[a-z]+[-\\s][a-z]+)\\s*,\\s*(.+)$`, 'i'));
+            const match = cleaned.match(new RegExp(String.raw`^vol(?:ume)?\.?\s+(${VOLUME_NUMBER_SOURCE})\s*,\s*(.+)$`, 'i'));
             if (!match) {
                 return { title: cleaned, marker: '', volumeTitle: '', detail: '' };
             }
@@ -1930,40 +1905,9 @@
             };
         }
 
-        function findVolumeMarkerInSourceText(sourceText) {
-            const cleaned = normalizeVolumeSourceText(sourceText);
-            if (!cleaned) return '';
-
-            const writtenNumbers = Object.keys(WRITTEN_VOLUME_NUMBERS).join('|');
-            const match = cleaned.match(new RegExp(`\\bvol(?:ume)?\\s+([0-9]+|[ivxlcdm]+|${writtenNumbers})\\b`, 'i'));
-            return match ? normalizeVolumeMarker(`volume ${match[1]}`) : '';
-        }
-
-        function normalizeVolumeSourceText(sourceText) {
-            const source = String(sourceText || '');
-            let filename = source;
-            try {
-                const url = new URL(source);
-                filename = url.pathname.split('/').filter(Boolean).pop() || source;
-            } catch {
-                filename = source;
-            }
-
-            try {
-                filename = decodeURIComponent(filename);
-            } catch {
-                // Keep the original source text if it is not valid URI encoding.
-            }
-
-            return cleanCitationText(filename)
-                .replace(/[._-]+/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
-        }
-
         function extractEmbeddedVolumeMarker(text) {
             const cleaned = trimTerminalPunctuation(cleanCitationText(text));
-            const matches = [...cleaned.matchAll(/(?:^|[,.;:]\s*)(vol(?:ume)?\.?)\s+([0-9]+|[ivxlcdm]+|[a-z]+(?:[-\s][a-z]+)?)(?=$|[,.;:])/gi)];
+            const matches = [...cleaned.matchAll(new RegExp(String.raw`(?:^|[,.;:]\s*)(vol(?:ume)?\.?)\s+(${VOLUME_NUMBER_SOURCE})(?=$|[,.;:])`, 'gi'))];
             const marker = matches
                 .map(match => normalizeVolumeMarker(`${match[1]} ${match[2]}`))
                 .find(Boolean);
@@ -1972,7 +1916,7 @@
 
         function normalizeVolumeMarker(text) {
             const cleaned = trimTerminalPunctuation(cleanCitationText(text));
-            const match = cleaned.match(/^vol(?:ume)?\.?\s+([0-9]+|[ivxlcdm]+|[a-z]+(?:[-\s][a-z]+)?)$/i);
+            const match = cleaned.match(new RegExp(String.raw`^vol(?:ume)?\.?\s+(${VOLUME_NUMBER_SOURCE})$`, 'i'));
             if (!match) return '';
 
             const number = normalizeVolumeNumber(match[1]);
@@ -1980,12 +1924,14 @@
         }
 
         function normalizeVolumeNumber(value) {
-            const cleaned = cleanCitationText(value).toLocaleLowerCase('en').replace(/-/g, ' ');
-            if (/^\d+$/.test(cleaned)) {
-                const number = parseInt(cleaned, 10);
-                return number > 0 ? String(number) : '';
+            const observed = cleanCitationText(value);
+            if (/^\d+[a-z]*(?:[–-]\d+[a-z]*)?$/i.test(observed)) {
+                const ends = observed.split(/[–-]/);
+                if (ends.some(end => parseInt(end, 10) <= 0)) return '';
+                return ends.map(end => end.replace(/^\d+/, number => String(parseInt(number, 10)))).join('–');
             }
 
+            const cleaned = observed.toLocaleLowerCase('en').replace(/-/g, ' ');
             if (/^[ivxlcdm]+$/i.test(cleaned)) {
                 const number = romanNumeralToNumber(cleaned);
                 return number > 0 ? String(number) : '';
@@ -2087,8 +2033,8 @@
 
             const primaryContributor = match[1]
                 .split(/\s*;\s*/)[0]
-                .replace(/\s*,\s*pritzker\s+edition(?:\s*,\s*vol(?:ume)?\.?\s+(?:[0-9]+|[ivxlcdm]+|[a-z]+(?:[-\s][a-z]+)?))?$/i, '')
-                .replace(/\s*,\s*vol(?:ume)?\.?\s+(?:[0-9]+|[ivxlcdm]+|[a-z]+(?:[-\s][a-z]+)?)$/i, '');
+                .replace(new RegExp(String.raw`\s*,\s*pritzker\s+edition(?:\s*,\s*vol(?:ume)?\.?\s+${VOLUME_NUMBER_SOURCE})?$`, 'i'), '')
+                .replace(new RegExp(String.raw`\s*,\s*vol(?:ume)?\.?\s+${VOLUME_NUMBER_SOURCE}$`, 'i'), '');
             const contributor = normalizeContributorName(primaryContributor);
             return looksLikeContributorName(contributor) ? contributor : '';
         }
@@ -2315,12 +2261,12 @@
 
         function isNonterminalCitationAbbreviation(sentence, following = '') {
             if (/\b(?:trans|comm)\.$/i.test(sentence) && /^\s+(?:and|&)\s+(?:trans|comm)\b/i.test(following)) return true;
-            const match = sentence.match(/([\p{L}]+)\.$/u);
+            const match = sentence.match(/(?:^|[^\p{L}\p{N}])([\p{L}]+)\.$/u);
             if (!match) return false;
 
             const token = match[1];
             return /^[A-Z]$/.test(token) ||
-                /^(inc|co|corp|ltd|jr|sr|st|vol|no)$/i.test(token);
+                /^(inc|co|corp|ltd|jr|sr|st|vol|no|rev)$/i.test(token);
         }
 
         function looksLikePublicationImprint(text) {

@@ -30,6 +30,18 @@ Run the focused, PDF-free range checks with `node --test test-chapter-ranges.cjs
 
 ## Citation formatting
 
+Prepared locally: enforce consistent Chicago notes-and-bibliography volume and
+edition abbreviations in the existing formatter: `vol. 8`, `vol. 2A`, `Vol. 8`
+at a sentence boundary, `2nd ed.`, and `20th anniversary ed.` Letter suffixes
+are optional, never invented or dropped. No volume observation means no volume
+or missing-volume notice; URLs/filenames no longer supply a short-display-only
+volume. A suffix such as `2A.` is not a personal initial, so the series stays
+outside the footnote's publication parentheses. Tests retain author/translator
+roles, real title words, title italics/roman series, and manual derived-field edits.
+The patron short display remains an identification line, not a formal shortened
+footnote. See [Chicago's citation guide](https://www.chicagomanualofstyle.org/tools_citationguide/citation-guide-1.html).
+These formatting checks do not certify every possible citation or repair bad readings.
+
 Bibliography, footnote and short display must retain the same title and contributor
 identities. Periods within personal initials are not title boundaries; numeric
 title dates are not source-page markers. Derived fields refresh with a corrected
@@ -59,21 +71,7 @@ legacy heuristic responses leave a visible warning and editable metadata;
 chapter-link generation still works. The browser no longer assembles a guessed
 citation from a PDF's potentially garbled hidden text layer.
 
-## Chapter PDF filenames
-
-For volumes of the same multi-volume work (for example, Wesley's collected
-works), the existing metadata scan observes the common work title and this
-volume's designation. The editable filename label produces names such as
-`Volume 19 — The Works of John Wesley — Introduction.pdf`. Volume leads so it
-survives shortening an unusually long filename. Publisher-series
-numbers on distinct books (for example WUNT) do not qualify. Missing observations
-leave the label empty; do not guess from the source filename or bibliography.
-The label resets for the next book; manual changes remain for the same book.
-
-Only newly generated chapter tokens carry this optional filename. Existing links,
-citation fields, chapter labels/ranges and Dropbox originals are unchanged.
-The label does not grant downloads: the generator still signs no-download patron
-links, and the reader keeps those restrictions. Where saving is allowed, PDF.js
-uses the Worker's filename header. Publishing this change requires both the
-streaming Worker and this generator; neither ToC service nor the original reader
-is involved. Offline tests cover the handoff, not fresh model-reading accuracy.
+The generator has no chapter-PDF filename label. New links carry chapter titles
+and page ranges only; this does not change existing links or the ToC Creator's
+separate full-book PDF naming rules. Bibliographic volume details remain part
+of the citation.

@@ -192,7 +192,7 @@ test('bibliography edits refresh automatic variants while preserving manual vari
     assert.equal(fields.shortCitation.value, 'My edited display line');
 });
 
-test('existing metadata read carries multi-volume work label to signed chapter filenames only', async () => {
+test('metadata fills citations without a chapter-filename control or filename token field', async () => {
     const { context: c, fields } = formatter();
     let reads = 0;
     const notes = [];
@@ -208,11 +208,10 @@ test('existing metadata read carries multi-volume work label to signed chapter f
     };
     await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book-19');
     assert.equal(reads, 1);
-    assert.equal(fields.downloadPrefix.value, 'Volume 19 — The Works of John Wesley');
+    assert.doesNotMatch(html, /downloadPrefix|Multi-volume work label for chapter PDF filenames/);
+    assert.equal(fields.downloadPrefix, undefined);
     const chapter = { title: 'Introduction', start: 8, end: 14 };
-    assert.equal(JSON.stringify(c.chapterSigningRecords([chapter])), JSON.stringify([{
-        ...chapter, filename: 'Volume 19 — The Works of John Wesley — Introduction.pdf'
-    }]));
+    assert.equal(JSON.stringify(c.chapterSigningRecords([{ ...chapter, filename: 'Old filename.pdf' }])), JSON.stringify([chapter]));
     assert.equal(fields.citation.value, reportedBibliography);
     assert.equal(fields.footnoteCitation.value, c.buildCitationVariantsFromBibliography(reportedBibliography).footnote);
     assert.equal(fields.shortCitation.value, c.buildCitationVariantsFromBibliography(reportedBibliography).short);
@@ -279,34 +278,62 @@ test('manual bibliography and derived-field edits bypass the scan and remain usa
     assert.equal(fields.shortCitation.value, 'My short display');
 });
 
-test('publisher series, unknown volume and ordinary books keep their old filename behavior', () => {
+test('ordinary and lettered volumes use the same CMS abbreviation in every display', () => {
     const { context: c } = formatter();
-    const chapter = { title: 'Reading in Context', start: 5, end: 20 };
-    for (const volume of [null, undefined, {}, { title: 'A Work' }, { designation: 'Volume 3' }]) {
-        c.fillDownloadPrefix(volume);
-        assert.equal(JSON.stringify(c.chapterSigningRecords([chapter])), JSON.stringify([chapter]));
+    for (const [observed, number] of [['8', '8'], ['2A', '2A'], ['6E', '6E'], ['25B', '25B'], ['IV', '4'], ['twenty-one', '21'], ['2A–2B', '2A–2B']]) {
+        const supplied = `Smith, Alex. A Commentary. Example Series, volume ${observed}. London: Example Press, 2000.`;
+        const bibliography = c.normalizeBibliographyCitation(supplied);
+        assert.equal(bibliography, `Smith, Alex. A Commentary. Example Series, vol. ${number}. London: Example Press, 2000.`);
+        const { footnote, short } = c.buildCitationVariantsFromBibliography(bibliography);
+        assert.equal(footnote, `Alex Smith, A Commentary, Example Series, vol. ${number} (London: Example Press, 2000).`);
+        assert.equal(short, `Smith, Alex. A Commentary, vol. ${number}`);
+        assert.equal(c.normalizeBibliographyCitation(bibliography), bibliography, 'repeat formatting must be stable');
+        assert.equal(c.formatCitationHtml(bibliography), `Smith, Alex. <em>A Commentary</em>. Example Series, vol. ${number}. London: Example Press, 2000.`);
+        assert.equal(c.normalizeFormalVolumeDetail(`Volume ${observed}`), `Vol. ${number}`);
+        assert.equal(c.extractTrailingVolumeMarker(`A Commentary, Volume ${observed}`).marker, `vol. ${number}`);
+        assert.equal(c.extractTitleEmbeddedVolumeDetail(`Collected Works: Volume ${observed}, Letters`).marker, `vol. ${number}`);
+        assert.equal(c.extractLeadingVolumeTitleDetail(`Volume ${observed}, Letters`).marker, `vol. ${number}`);
     }
-    // A publisher series in the citation/source is not a multi-volume work observation.
-    c.fillDerivedCitationFields('Smith, John. A Distinct Book. WUNT, vol. 300. London: Press, 2020.', 'WUNT-Volume-300.pdf');
-    assert.equal(JSON.stringify(c.chapterSigningRecords([chapter])), JSON.stringify([chapter]));
 });
 
-test('manual download labels survive the same book but cannot carry into the next one', () => {
+test('reported lettered volumes stay outside footnote imprint and retain contributor initials', () => {
+    const { context: c } = formatter();
+    // Supplied citation strings, not a new AI read or bibliographic fact check.
+    const entries = [
+        ['Propp, William H. C.', 'William H. C. Propp', 'Exodus 19–40: A New Translation with Introduction and Commentary', 'The Anchor Bible', '2A', 'New York: Doubleday, 2006'],
+        ['Sasson, Jack M.', 'Jack M. Sasson', 'Judges 13–21: A New Translation with Commentary', 'The Anchor Yale Bible', '6E', 'New Haven: Yale University Press, 2025']
+    ];
+    for (const [author, noteAuthor, title, series, volume, imprint] of entries) {
+        const bibliography = c.normalizeBibliographyCitation(`${author} ${title}. ${series}, volume ${volume}. ${imprint}.`);
+        assert.equal(bibliography, `${author} ${title}. ${series}, vol. ${volume}. ${imprint}.`);
+        assert.equal(c.buildCitationVariantsFromBibliography(bibliography).footnote, `${noteAuthor}, ${title}, ${series}, vol. ${volume} (${imprint}).`);
+    }
+});
+
+test('missing volumes stay absent even when a source filename supplies one', () => {
     const { context: c, fields } = formatter();
-    c.prepareDownloadPrefix('book-19');
-    c.fillDownloadPrefix({ title: 'Collected Works', designation: 'Tome XIX' });
-    assert.equal(fields.downloadPrefix.value, 'Tome XIX — Collected Works');
-    fields.downloadPrefix.value = '';
-    c.fillDownloadPrefix({ title: 'Collected Works', designation: 'Tome XIX' });
-    assert.equal(fields.downloadPrefix.value, '', 'clearing the label is a manual opt-out');
-    fields.downloadPrefix.value = 'My chosen volume label';
-    c.prepareDownloadPrefix('book-19');
-    c.fillDownloadPrefix({ title: 'Another suggestion', designation: 'Volume 19' });
-    assert.equal(fields.downloadPrefix.value, 'My chosen volume label');
-    c.prepareDownloadPrefix('different-book');
-    assert.equal(fields.downloadPrefix.value, '');
-    c.fillDownloadPrefix({ title: '전집', designation: '제2권' });
-    assert.equal(fields.downloadPrefix.value, '제2권 — 전집');
-    c.clearCitationAutoFillState();
-    assert.equal(fields.downloadPrefix.value, '');
+    const bibliography = 'Moore, Carey A. Esther. The Anchor Bible.';
+    fields.dropboxUrl.value = 'https://example.test/Esther-Volume-7A.pdf';
+    c.fillDerivedCitationFields(bibliography);
+    assert.equal(fields.shortCitation.value, 'Moore, Carey A. Esther');
+    assert.equal(fields.footnoteCitation.value, 'Carey A. Moore, Esther, The Anchor Bible.');
+    assert.equal(c.normalizeVolumeMarker('Volume and Voice'), '');
+    assert.equal(c.formatFormalCitationTitle('Volume and Voice'), 'Volume and Voice');
+    assert.equal(c.normalizeFormalVolumeDetail('Volume 2A3'), 'Volume 2A3', 'never truncate an unrecognized designation');
+});
+
+test('edition abbreviations retain qualifiers and punctuation in bibliography and note', () => {
+    const { context: c } = formatter();
+    for (const [observed, bibEdition, noteEdition] of [
+        ['second edition', '2nd ed.', '2nd ed.'],
+        ['20th anniversary edition', '20th anniversary ed.', '20th anniversary ed.'],
+        ['revised edition', 'Rev. ed.', 'rev. ed.'],
+        ['Expanded edition', 'Expanded ed.', 'expanded ed.'],
+        ['Updated edition', 'Updated ed.', 'updated ed.']
+    ]) {
+        const bibliography = c.normalizeBibliographyCitation(`Smith, Alex. A Book. ${observed}. London: Example Press, 2000.`);
+        assert.equal(bibliography, `Smith, Alex. A Book. ${bibEdition} London: Example Press, 2000.`);
+        assert.equal(c.normalizeBibliographyCitation(bibliography), bibliography);
+        assert.equal(c.buildCitationVariantsFromBibliography(bibliography).footnote, `Alex Smith, A Book, ${noteEdition} (London: Example Press, 2000).`);
+    }
 });
