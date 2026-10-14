@@ -39,7 +39,7 @@ An explicit editor/translator role supplies a name/title boundary. Unmarked,
 ambiguous names still need review; comma-and phrases alone cannot establish it.
 These checks do not establish fresh AI metadata-reading accuracy.
 
-2026-10-14, local correction (not deployed): format the supplied contributor
+Released 2026-10-14: format the supplied contributor
 role instead of guessing translator status from a same-name responsibility or
 a known title. The old inference and duplicate-credit removal reproduced Moore's
 incorrect `trans.` and erased his introduction/notes credit. Remove those
@@ -47,6 +47,12 @@ assumptions; preserve explicit translator/editor and compound responsibilities.
 The metadata reader decides commentary authorship from visible context. No
 volume or missing-volume notice is added when the scan supplies none. Original
 generators, saved citations and manual edits are unchanged.
+Generator source `c933331` and streaming Worker version
+`87e3900b-521e-4a17-96b9-30e3b5bb08b1` are live. All 66 offline checks pass;
+published HTML byte-matches the tested file and its served formatter produces
+`Moore, Carey A. Esther. The Anchor Bible.` Health/authentication/CORS pass.
+No new AI scan was run; refresh the page before a new scan. Existing saved
+citations are not retroactively rewritten.
 
 Only an AI metadata response may auto-fill the citation. Missing, failed or
 legacy heuristic responses leave a visible warning and editable metadata;
