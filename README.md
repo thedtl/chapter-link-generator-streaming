@@ -30,7 +30,7 @@ Run the focused, PDF-free range checks with `node --test test-chapter-ranges.cjs
 
 ## Citation formatting
 
-Prepared locally: enforce consistent Chicago notes-and-bibliography volume and
+Released 2026-10-14: enforce consistent Chicago notes-and-bibliography volume and
 edition abbreviations in the existing formatter: `vol. 8`, `vol. 2A`, `Vol. 8`
 at a sentence boundary, `2nd ed.`, and `20th anniversary ed.` Letter suffixes
 are optional, never invented or dropped. No volume observation means no volume
@@ -41,6 +41,11 @@ roles, real title words, title italics/roman series, and manual derived-field ed
 The patron short display remains an identification line, not a formal shortened
 footnote. See [Chicago's citation guide](https://www.chicagomanualofstyle.org/tools_citationguide/citation-guide-1.html).
 These formatting checks do not certify every possible citation or repair bad readings.
+Generator source `b68b45e` and Worker source `a7c88be` are deployed; Worker version
+`6a44742e-aa81-4ee5-abdc-5c99d1d101c0` serves 100%. All 67 offline checks pass.
+Published HTML matches the tested source, its formatter passes ordinary/lettered/
+missing-volume checks, and the filename box is absent. Health/auth/CORS pass;
+runtime and bindings are unchanged. No fresh AI scan or ToC-service update.
 
 Bibliography, footnote and short display must retain the same title and contributor
 identities. Periods within personal initials are not title boundaries; numeric
@@ -59,8 +64,8 @@ assumptions; preserve explicit translator/editor and compound responsibilities.
 The metadata reader decides commentary authorship from visible context. No
 volume or missing-volume notice is added when the scan supplies none. Original
 generators, saved citations and manual edits are unchanged.
-Generator source `c933331` and streaming Worker version
-`87e3900b-521e-4a17-96b9-30e3b5bb08b1` are live. All 66 offline checks pass;
+That earlier release used generator source `c933331` and streaming Worker version
+`87e3900b-521e-4a17-96b9-30e3b5bb08b1`. All 66 offline checks passed;
 published HTML byte-matches the tested file and its served formatter produces
 `Moore, Carey A. Esther. The Anchor Bible.` Health/authentication/CORS pass.
 No new AI scan was run; refresh the page before a new scan. Existing saved
