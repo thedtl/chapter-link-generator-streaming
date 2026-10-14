@@ -56,6 +56,73 @@ test('edited-book title, subtitle and both editors survive all three display lin
     assert.match(footnote, /^William P\. Brown and S\. Dean McBride Jr\., eds\.,/);
 });
 
+test('commentary author remains the author without an invented volume or translator role', () => {
+    const { context: c } = formatter();
+    // Visible title-page words supplied by the user, not a fresh model reading.
+    const citation = 'Moore, Carey A. Esther. The Anchor Bible.';
+    assert.equal(c.normalizeBibliographyCitation(citation), citation);
+    const variants = c.buildCitationVariantsFromBibliography(citation);
+    assert.equal(variants.footnote, 'Carey A. Moore, Esther, The Anchor Bible.');
+    assert.equal(variants.short, 'Moore, Carey A. Esther');
+});
+
+test('composite scholarly responsibilities are neither translator-only nor discarded', () => {
+    const { context: c } = formatter();
+    for (const credit of ['Introduction, translation, and notes by Carey A. Moore', 'Translation and commentary by Carey A. Moore', 'Translated and edited by Carey A. Moore', 'Translation and commentary']) {
+        const citation = `Moore, Carey A. Esther. ${credit}. The Anchor Bible.`;
+        assert.equal(c.normalizeBibliographyCitation(citation), citation);
+        const variants = c.buildCitationVariantsFromBibliography(citation);
+        assert.ok(variants.footnote.includes(credit), variants.footnote);
+        assert.equal(variants.short, 'Moore, Carey A. Esther');
+        assert.doesNotMatch(variants.footnote, /\btrans\./);
+    }
+    const titleFirst = 'Esther. Introduction, translation, and notes by Carey A. Moore. Garden City: Doubleday, 1971.';
+    assert.equal(c.normalizeBibliographyCitation(titleFirst), titleFirst);
+    assert.equal(c.parseBibliographyCitation(titleFirst).authorText, '');
+});
+
+test('explicit commentary and compound contributor roles retain their meaning', () => {
+    const { context: c } = formatter();
+    for (const [role, expected] of [['commentator', 'comm.'], ['translator and commentator', 'trans. and comm.'], ['commentator and translator', 'comm. and trans.'], ['trans. and comm.', 'trans. and comm.']]) {
+        const citation = `Smith, J. Alex, ${role}. A Commentary. London: Example Press, 2000.`;
+        const bibliography = c.normalizeBibliographyCitation(citation);
+        const variants = c.buildCitationVariantsFromBibliography(bibliography);
+        for (const display of [bibliography, variants.footnote, variants.short]) {
+            assert.ok(display.includes(expected), display);
+            assert.ok(display.includes('J. Alex'), display);
+            assert.ok(display.includes('A Commentary'), display);
+        }
+    }
+});
+
+test('genuine translations and edition responsibilities survive without role inference', () => {
+    const { context: c } = formatter();
+    const controls = [
+        ['Rice, Howard. The Pastor as Spiritual Guide. Translated by Choi Dae-hyung. Seoul: Example Press, 2000.', 'Translated by Choi Dae-hyung', 'trans. Choi Dae-hyung'],
+        ['Bonaventure. Itinéraire de l’esprit jusqu’en Dieu. Introduction, notes et glossaire par Laure Solignac, traduction par André Ménard. Paris: Vrin, 2019.', 'Introduction, notes et glossaire par Laure Solignac, traduction par André Ménard', 'traduction par André Ménard'],
+        ['Wesley, John. Journal and Diaries II (1738–43). Edited by W. Reginald Ward and Richard P. Heitzenrater. Nashville: Abingdon Press, 1990.', 'Edited by W. Reginald Ward and Richard P. Heitzenrater', 'ed. W. Reginald Ward and Richard P. Heitzenrater'],
+    ];
+    for (const [citation, bibliographyCredit, footnoteCredit] of controls) {
+        assert.ok(c.normalizeBibliographyCitation(citation).includes(bibliographyCredit));
+        assert.ok(c.buildCitationVariantsFromBibliography(citation).footnote.includes(footnoteCredit));
+    }
+    const titleFirst = 'Confessions. Translated by Alex Smith. London: Example Press, 2000.';
+    assert.match(c.parseBibliographyCitation(titleFirst).authorText, /Alex Smith, trans\./);
+    assert.match(c.buildCitationVariantsFromBibliography(titleFirst).footnote, /Alex Smith, trans\./);
+});
+
+test('a familiar title cannot override an explicit editor or supply a missing role', () => {
+    const { context: c } = formatter();
+    for (const role of ['', ', ed.', ', trans.']) {
+        const citation = `Matt, Daniel C.${role} The Zohar. Pritzker Edition. Stanford: Stanford University Press, 2011.`;
+        const displays = [c.normalizeBibliographyCitation(citation), ...Object.values(c.buildCitationVariantsFromBibliography(citation))];
+        for (const display of displays) {
+            if (role) assert.ok(display.includes(role.slice(2)), display);
+            if (role !== ', trans.') assert.doesNotMatch(display, /\btrans\./);
+        }
+    }
+});
+
 test('explicit contributor roles keep complete names together before the title', () => {
     const { context: c } = formatter();
     for (const author of ['Ward, W. Reginald, ed', 'Smith, J. Paul, trans', 'Smith, J. Paul, and Mary Jones, eds', 'Smith, J. Paul, comp']) {

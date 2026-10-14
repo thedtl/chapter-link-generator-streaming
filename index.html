@@ -1148,18 +1148,13 @@
         }
 
         function normalizeAiCitationText(text) {
-            const cleaned = normalizeCompoundCreatorRoleText(text)
+            const cleaned = normalizeSpelledOutCreatorRoleText(text)
                 .replace(/\b(by|par)\b\s+([^.;()]*?)(\s*)(?=[.;()]|$)/giu, (_match, connector, names, spacing) => {
                     const normalizedConnector = /^par$/i.test(connector) ? 'par' : 'by';
                     return `${normalizedConnector} ${normalizeContributorName(names)}${spacing}`;
                 });
 
             return normalizeLeadingInvertedInitialAuthorHeading(cleaned);
-        }
-
-        function normalizeCompoundCreatorRoleText(text) {
-            return normalizeSpelledOutCreatorRoleText(cleanCitationText(text))
-                .replace(/\btrans\.?\s+(?:and|&)\s+comm\.?(?=\s|[,.;:]|$)/gi, 'trans.');
         }
 
         function normalizeSpelledOutCreatorRoleText(text) {
@@ -1182,7 +1177,7 @@
                 if (source[index] !== '.' || !/\s/.test(source[index + 1] || '')) continue;
 
                 const sentence = source.slice(0, index + 1).trim();
-                if (isNonterminalCitationAbbreviation(sentence)) continue;
+                if (isNonterminalCitationAbbreviation(sentence, source.slice(index + 1))) continue;
 
                 return {
                     first: trimTerminalPunctuation(sentence),
@@ -1200,7 +1195,9 @@
             const cleaned = trimTerminalPunctuation(cleanCitationText(text));
             const rolePhrase = '(?:translators?|commentators?)(?:\\s*,?\\s*(?:and|&)\\s*(?:translators?|commentators?))?';
             const rolePattern = new RegExp(`,\\s*(${rolePhrase})$`, 'iu');
-            return cleaned.replace(rolePattern, ', trans');
+            return cleaned.replace(rolePattern, (_match, roles) => ', ' + roles
+                .replace(/translators?/gi, 'trans.')
+                .replace(/commentators?/gi, 'comm.'));
         }
 
         function normalizeContributorName(text) {
@@ -1229,7 +1226,7 @@
             // An explicit contributor role supplies the sentence boundary.
             // Its first initial must not split the remaining names into the title.
             const firstSentence = splitFirstCitationSentence(cleaned);
-            if (/,\s*(?:eds?|comps?|trans)\.?$/i.test(firstSentence.first)) {
+            if (extractSharedCreatorRole(firstSentence.first).role) {
                 return null;
             }
             const match = cleaned.match(/^([\p{Lu}][\p{L}'’-]+(?:\s+[\p{Lu}][\p{L}'’-]+){0,3}),\s*(?:and\s+)?(((?:[\p{Lu}][\p{L}'’-]*\.?\s+){0,3}[A-Z]\.))\s+(.+)$/u);
@@ -1388,11 +1385,9 @@
             const parts = parseBibliographyCitation(plainBibliography);
             if (!parts.titleText) return plainBibliography;
 
-            const formalAuthorText = resolveFormalCreatorText(parts.authorText, parts.publication);
-            const formalPublication = removeDuplicateFormalTranslatorResponsibility(parts.publication, parts.authorText, formalAuthorText);
-            const authorPart = formalAuthorText ? formatCmsBibliographyAuthors(formalAuthorText) : '';
+            const authorPart = parts.authorText ? formatCmsBibliographyAuthors(parts.authorText) : '';
             const titlePart = formatFormalCitationTitle(parts.titleText) + '.';
-            const normalizedPublication = formalPublication ? normalizeBibliographyPublication(formalPublication) : '';
+            const normalizedPublication = parts.publication ? normalizeBibliographyPublication(parts.publication) : '';
             const publicationPart = normalizedPublication ? punctuateCitation(normalizedPublication) : '';
 
             return cleanCitationText([authorPart, titlePart, publicationPart].filter(Boolean).join(' '));
@@ -1447,12 +1442,9 @@
                 return { footnote: plainBibliography, short: plainBibliography };
             }
 
-            const formalAuthorText = resolveFormalCreatorText(parts.authorText, parts.publication);
-            const formalPublication = removeDuplicateFormalTranslatorResponsibility(parts.publication, parts.authorText, formalAuthorText);
-            const footnoteAuthors = bibliographyAuthorsToFootnote(formalAuthorText);
+            const footnoteAuthors = bibliographyAuthorsToFootnote(parts.authorText);
             const titleText = formatFormalCitationTitle(parts.titleText || '');
-            const footnotePublication = splitFootnotePublicationDetails(formalPublication);
-            const shortPublication = splitFootnotePublicationDetails(parts.publication);
+            const footnotePublication = splitFootnotePublicationDetails(parts.publication);
             const footnoteDetails = normalizeFootnoteBookDetails(footnotePublication.details);
             const titleAndDetails = [
                 titleText,
@@ -1464,8 +1456,8 @@
                 footnoteAuthors,
                 titleAndImprint
             ].filter(Boolean).join(', ') + '.';
-            const shortAuthors = resolveShortDisplayCreators(parts.authorText, parts.titleText, shortPublication.details);
-            const shortTitle = formatShortDisplayTitle(parts.titleText || '', shortPublication.details, options.sourceText || '');
+            const shortAuthors = formatShortDisplayCreators(parts.authorText);
+            const shortTitle = formatShortDisplayTitle(parts.titleText || '', footnotePublication.details, options.sourceText || '');
             const short = [shortAuthors, shortTitle].filter(Boolean).join('. ');
 
             return {
@@ -1478,46 +1470,6 @@
             const titleVolume = extractTrailingVolumeMarker(title);
             const baseTitle = formatCitationTitle(titleVolume.title || title);
             return [baseTitle, titleVolume.marker].filter(Boolean).join(', ');
-        }
-
-        function resolveFormalCreatorText(authorText, publication = '') {
-            const role = extractSharedCreatorRole(authorText);
-            if (!role.names || role.role) return authorText;
-
-            const translator = extractTranslatorResponsibilityContributor(publication);
-            if (translator && normalizeShortCreatorComparison(role.names) === normalizeShortCreatorComparison(translator)) {
-                return cleanCitationText(`${trimAuthorName(cleanAuthorLine(authorText))}, trans.`);
-            }
-
-            return authorText;
-        }
-
-        function removeDuplicateFormalTranslatorResponsibility(publication, authorText, formalAuthorText) {
-            if (!publication || extractCreatorRoleSuffix(formalAuthorText).role !== 'trans.') {
-                return publication;
-            }
-
-            const formalNames = extractCreatorRoleSuffix(formalAuthorText).name;
-            if (!formalNames || normalizeShortCreatorComparison(authorText) !== normalizeShortCreatorComparison(formalNames)) {
-                return publication;
-            }
-
-            const sentences = splitCitationSentences(publication)
-                .map(sentence => removeMatchingTranslatorResponsibilityClause(sentence, formalNames))
-                .filter(Boolean);
-
-            return sentences.length ? joinCitationSentences(sentences) : '';
-        }
-
-        function removeMatchingTranslatorResponsibilityClause(sentence, formalNames) {
-            const contributor = extractTranslatorResponsibilityContributor(sentence);
-            if (!contributor || normalizeShortCreatorComparison(contributor) !== normalizeShortCreatorComparison(formalNames)) {
-                return sentence;
-            }
-
-            const clauses = cleanCitationText(sentence).split(/\s*;\s*/).map(clause => cleanCitationText(clause)).filter(Boolean);
-            if (clauses.length <= 1) return '';
-            return clauses.slice(1).join('; ');
         }
 
         function normalizeFormalBookPublication(publication) {
@@ -1563,10 +1515,9 @@
 
         function normalizeFootnoteResponsibilityPhrase(text) {
             return cleanCitationText(text)
-                .replace(/(^|,\s*)translation(?:\s+and\s+commentary|\s+with\s+[^,.;]+|\s+and\s+with\s+[^,.;]+)?\s+by\s+/gi, '$1trans. ')
-                .replace(/(^|,\s*)translated(?:\s+and\s+edited|\s+with\s+[^,.;]+|\s+and\s+with\s+[^,.;]+)?\s+by\s+/gi, '$1trans. ')
-                .replace(/(^|,\s*)edited(?:\s+with\s+[^,.;]+|\s+and\s+[^,.;]+)?\s+by\s+/gi, '$1ed. ')
-                .replace(/(^|,\s*)compiled(?:\s+with\s+[^,.;]+|\s+and\s+[^,.;]+)?\s+by\s+/gi, '$1comp. ');
+                .replace(/^(?:translation|translated)\s+by\s+/i, 'trans. ')
+                .replace(/^edited\s+by\s+/i, 'ed. ')
+                .replace(/^compiled\s+by\s+/i, 'comp. ');
         }
 
         function normalizeFormalEditionDetail(text) {
@@ -2119,35 +2070,11 @@
             }, 0);
         }
 
-        function resolveShortDisplayCreators(authorText, titleText, details) {
-            const role = inferShortDisplayCreatorRole(authorText, titleText, details);
-            return formatShortDisplayCreators(role.names || authorText, role.role);
-        }
-
-        function inferShortDisplayCreatorRole(authorText, titleText, details) {
-            const role = extractSharedCreatorRole(authorText);
-            if (!role.names) return { names: '', role: '' };
-
-            const shortTitle = formatShortDisplayBilingualTitle(titleText);
-            const translator = extractTranslatorResponsibilityContributor(details);
-            if (translator && normalizeShortCreatorComparison(role.names) === normalizeShortCreatorComparison(translator)) {
-                return { names: role.names, role: 'trans.' };
-            }
-
-            if (translator && role.role === 'ed.' && looksLikeZoharShortTitle(shortTitle)) {
-                return { names: translator, role: 'trans.' };
-            }
-
-            if (!role.role && looksLikeZoharShortTitle(shortTitle)) {
-                return { names: role.names, role: 'trans.' };
-            }
-
-            return { names: authorText, role: '' };
-        }
-
         function extractTranslatorResponsibilityContributor(details) {
             const statement = findResponsibilityStatement(details);
-            if (!statement || !/\b(translated|translation|traduction|traduit)\b/i.test(statement)) {
+            // Only an explicit translation-only credit supports title-first
+            // translator handling. Composite scholarly credits retain every role.
+            if (!statement || !/^(?:(?:translated|translation)\s+by|(?:traduction|traduit)\s+par)\s+/i.test(statement)) {
                 return '';
             }
 
@@ -2166,21 +2093,14 @@
             return looksLikeContributorName(contributor) ? contributor : '';
         }
 
-        function normalizeShortCreatorComparison(text) {
-            return formatChicagoAuthors(text)
-                .toLocaleLowerCase('en')
-                .replace(/[^\p{L}\p{N}]+/gu, ' ')
-                .trim();
-        }
-
         function looksLikeZoharShortTitle(title) {
             const cleaned = cleanCitationText(title);
             return /\bthe\s+zohar\b/i.test(cleaned) || /ספר\s*ה(?:זוהר|זהר)/u.test(cleaned);
         }
 
-        function formatShortDisplayCreators(authorText, fallbackRole = '') {
+        function formatShortDisplayCreators(authorText) {
             const role = extractSharedCreatorRole(authorText);
-            const roleToken = role.role || normalizeCreatorRoleToken(fallbackRole);
+            const roleToken = role.role;
             const formatted = roleToken
                 ? trimAuthorListForRole(formatChicagoAuthors(role.names))
                 : trimTerminalPunctuation(formatChicagoAuthors(role.names));
@@ -2189,7 +2109,7 @@
 
         function extractSharedCreatorRole(authorText) {
             const cleaned = trimTerminalPunctuation(cleanAuthorLine(authorText));
-            const match = cleaned.match(/^(.*?)\s*,?\s+(eds?\.?|comps?\.?|trans\.?(?:\s+(?:and|&)\s+comm\.?)?)$/i);
+            const match = cleaned.match(/^(.*?)\s*,?\s+(eds?\.?|comps?\.?|(?:trans|comm)\.?(?:\s+(?:and|&)\s+(?:trans|comm)\.?)?)$/i);
             if (!match) {
                 return { names: cleaned, role: '' };
             }
@@ -2209,17 +2129,19 @@
 
         function normalizeCreatorRoleToken(text) {
             const cleaned = cleanFrontMatterLine(text).toLocaleLowerCase('en').replace(/\.$/, '');
-            if (/^trans\.?\s+(?:and|&)\s+comm$/.test(cleaned)) return 'trans.';
+            if (/^trans\.?\s+(?:and|&)\s+comm$/.test(cleaned)) return 'trans. and comm.';
+            if (/^comm\.?\s+(?:and|&)\s+trans$/.test(cleaned)) return 'comm. and trans.';
             if (cleaned === 'eds') return 'eds.';
             if (cleaned === 'ed') return 'ed.';
             if (cleaned === 'comps') return 'comps.';
             if (cleaned === 'comp') return 'comp.';
             if (cleaned === 'trans') return 'trans.';
+            if (cleaned === 'comm') return 'comm.';
             return '';
         }
 
         function parseBibliographyCitation(bibliography) {
-            const source = normalizeLeadingInvertedInitialAuthorHeading(normalizeCompoundCreatorRoleText(bibliography));
+            const source = normalizeLeadingInvertedInitialAuthorHeading(normalizeSpelledOutCreatorRoleText(bibliography));
             const emMatch = source.match(/<em>([\s\S]+?)<\/em>/i);
             let authorText = '';
             let titleText = '';
@@ -2272,33 +2194,11 @@
                 publication = joinCitationSentences([titleVolume.detail, publication].filter(Boolean));
             }
 
-            const authorRole = extractSharedCreatorRole(authorText);
-            if (authorRole.names && !authorRole.role && hasStandaloneTranslatorRoleDetail(publication)) {
-                authorText = cleanCitationText(`${authorText}, trans.`);
-                publication = removeStandaloneTranslatorRoleDetails(publication);
-            }
-
             return {
                 authorText,
                 titleText,
                 publication
             };
-        }
-
-        function hasStandaloneTranslatorRoleDetail(publication) {
-            return splitCitationSentences(publication).some(sentence => isStandaloneTranslatorRoleDetail(sentence));
-        }
-
-        function removeStandaloneTranslatorRoleDetails(publication) {
-            return joinCitationSentences(
-                splitCitationSentences(publication).filter(sentence => !isStandaloneTranslatorRoleDetail(sentence))
-            );
-        }
-
-        function isStandaloneTranslatorRoleDetail(text) {
-            const cleaned = trimTerminalPunctuation(cleanCitationText(text));
-            if (!cleaned || /\b(?:by|par)\b/i.test(cleaned)) return false;
-            return /^(?:translated|translation)(?:\s*,?\s*(?:and|with|and\s+with)\b.*)?$/i.test(cleaned);
         }
 
         function parseTitleFirstResponsibilityCitation(firstSentence, remainingSentences) {
@@ -2399,7 +2299,7 @@
                 if (source[index] !== '.' || !/\s/.test(source[index + 1] || '')) continue;
 
                 const sentence = source.slice(start, index + 1).trim();
-                if (isNonterminalCitationAbbreviation(sentence)) continue;
+                if (isNonterminalCitationAbbreviation(sentence, source.slice(index + 1))) continue;
 
                 sentences.push(sentence);
                 start = index + 1;
@@ -2413,7 +2313,8 @@
                 .filter(Boolean);
         }
 
-        function isNonterminalCitationAbbreviation(sentence) {
+        function isNonterminalCitationAbbreviation(sentence, following = '') {
+            if (/\b(?:trans|comm)\.$/i.test(sentence) && /^\s+(?:and|&)\s+(?:trans|comm)\b/i.test(following)) return true;
             const match = sentence.match(/([\p{L}]+)\.$/u);
             if (!match) return false;
 
@@ -2428,31 +2329,9 @@
                 (/:/.test(cleaned) || /\b(press|publisher|publishers|publishing|university|college|éditions?|editiones|cerf|oxford|cambridge|paris|new york|london|chicago|boston|leiden|brill)\b/i.test(cleaned));
         }
 
-        function formatShortResponsibilityContributor(publication) {
-            const statement = findResponsibilityStatement(publication);
-            if (!statement) return '';
-
-            const contributor = extractResponsibilityContributor(statement);
-            if (!contributor) return '';
-
-            if (/\b(translated|translation|traduction|traduit)\b/i.test(statement)) {
-                return 'trans. ' + contributor;
-            }
-
-            return contributor;
-        }
-
         function findResponsibilityStatement(text) {
             return splitCitationSentences(text)
                 .find(sentence => looksLikeResponsibilityRoleLine(sentence) && /\b(by|par)\b/i.test(sentence)) || '';
-        }
-
-        function extractResponsibilityContributor(statement) {
-            const match = cleanCitationText(statement).match(/\b(?:by|par)\b\s+(.+)$/i);
-            if (!match) return '';
-
-            const name = normalizeContributorName(match[1]);
-            return looksLikeContributorName(name) ? name : '';
         }
 
         function bibliographyAuthorsToFootnote(authorText) {
@@ -2501,7 +2380,7 @@
 
         function extractCreatorRoleSuffix(name) {
             const cleaned = trimAuthorName(name);
-            const match = cleaned.match(/^(.*?)\s*,?\s+(eds?\.?|comps?\.?|trans\.?(?:\s+(?:and|&)\s+comm\.?)?)$/i);
+            const match = cleaned.match(/^(.*?)\s*,?\s+(eds?\.?|comps?\.?|(?:trans|comm)\.?(?:\s+(?:and|&)\s+(?:trans|comm)\.?)?)$/i);
             if (!match) {
                 return { name: cleaned, role: '' };
             }
@@ -2517,7 +2396,7 @@
             if (!cleaned) return [];
 
             const pieces = cleaned
-                .replace(/\s+(?:and|&)\s+/gi, ', ')
+                .replace(/\s+(?:and|&)\s+(?!(?:trans|comm)\.?\s*$)/gi, ', ')
                 .split(/\s*,\s*/)
                 .map(piece => trimAuthorName(piece))
                 .filter(Boolean);

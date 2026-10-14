@@ -39,6 +39,15 @@ An explicit editor/translator role supplies a name/title boundary. Unmarked,
 ambiguous names still need review; comma-and phrases alone cannot establish it.
 These checks do not establish fresh AI metadata-reading accuracy.
 
+2026-10-14, local correction (not deployed): format the supplied contributor
+role instead of guessing translator status from a same-name responsibility or
+a known title. The old inference and duplicate-credit removal reproduced Moore's
+incorrect `trans.` and erased his introduction/notes credit. Remove those
+assumptions; preserve explicit translator/editor and compound responsibilities.
+The metadata reader decides commentary authorship from visible context. No
+volume or missing-volume notice is added when the scan supplies none. Original
+generators, saved citations and manual edits are unchanged.
+
 Only an AI metadata response may auto-fill the citation. Missing, failed or
 legacy heuristic responses leave a visible warning and editable metadata;
 chapter-link generation still works. The browser no longer assembles a guessed
