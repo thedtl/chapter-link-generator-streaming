@@ -38,7 +38,8 @@ signing or metadata request is needed. Changed source URLs require generation
 for the new book, and New Book clears the old link context.
 
 Manual citation text is preserved, including edits made during an in-flight scan;
-HTML only escapes it and applies title italics where parsing is unambiguous.
+HTML escapes it; title italics now use the separately scanned or staff-selected
+title span, not citation parsing (see the update below).
 Manually edited footnote/short-display fields stay unchanged. Removed last-word
 surname inversion and speculative initial/particle-name repairs (including the
 old hardcoded de Vries repair): these tried to fix past errors but could corrupt
@@ -103,3 +104,17 @@ The generator has no chapter-PDF filename label. New links carry chapter titles
 and page ranges only; this does not change existing links or the ToC Creator's
 separate full-book PDF naming rules. Bibliographic volume details remain part
 of the citation.
+
+## Title italics — 2026-10-22 update
+
+Use the existing scanner's separately supported title, only when it matches one
+exact span of the displayed citation. Missing, mismatched or repeated titles
+stay plain; never infer italics from author punctuation. Staff can highlight
+the title in Citation, click **Use selected text as title**, then **Update HTML**,
+or use **Clear italics**. Copy also applies pending changes to all HTML parts.
+Edits outside the title retain its span; changes inside or at an ambiguous title
+boundary clear it for reselection. New Book clears it, and another source cannot
+reuse it. Escaping preserves manual text, and chapter URLs/ranges stay unchanged.
+No extra AI calls, PDF reads, signing requests, storage or model changes.
+39 generator checks and a synthetic browser select/clear/update check pass;
+these verify formatting, not fresh metadata-reading accuracy.

@@ -17,6 +17,7 @@ function formatter() {
             appendChild(child) { this.children.push(child); },
             querySelector() { return this.pre ||= element(); },
             focus() {},
+            setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
             get textContent() { return this.innerHTML.replace(/<[^>]*>/g, ''); },
             set textContent(text) { this.innerHTML = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
         };
@@ -36,6 +37,16 @@ function formatter() {
 
 const reportedBibliography = 'Ward, W. Reginald, and Richard P. Heitzenrater, eds. Journal and Diaries II (1738–43). The Bicentennial Edition of the Works of John Wesley, vol. 19. Nashville: Abingdon Press, 1990.';
 
+function titleSpan(citation, title) {
+    const start = citation.indexOf(title);
+    return { citation, start, end: start + title.length };
+}
+
+function selectTitle(c, fields, title, start = fields.citation.value.indexOf(title)) {
+    fields.citation.setSelectionRange(start, start + title.length);
+    c.useSelectedCitationTitle();
+}
+
 test('complete editor names, dated title, and series volume survive all citation formats', () => {
     const { context: c } = formatter();
     assert.equal(c.normalizeBibliographyCitation(reportedBibliography), reportedBibliography);
@@ -45,7 +56,7 @@ test('complete editor names, dated title, and series volume survive all citation
     const variants = c.buildCitationVariantsFromBibliography(reportedBibliography);
     assert.equal(variants.footnote, 'W. Reginald Ward and Richard P. Heitzenrater, eds., Journal and Diaries II (1738–43), The Bicentennial Edition of the Works of John Wesley, vol. 19 (Nashville: Abingdon Press, 1990).');
     assert.equal(variants.short, 'Ward, W. Reginald, and Richard P. Heitzenrater, eds. Journal and Diaries II (1738–43), vol. 19');
-    assert.match(c.formatCitationHtml(reportedBibliography), /<em>Journal and Diaries II \(1738–43\)<\/em>/);
+    assert.match(c.formatCitationHtml(reportedBibliography, titleSpan(reportedBibliography, 'Journal and Diaries II (1738–43)')), /<em>Journal and Diaries II \(1738–43\)<\/em>/);
 });
 
 test('edited-book title, subtitle and both editors survive all three display lines', () => {
@@ -295,7 +306,7 @@ test('ordinary and lettered volumes use the same CMS abbreviation in every displ
         assert.equal(footnote, `Alex Smith, A Commentary, Example Series, vol. ${number} (London: Example Press, 2000).`);
         assert.equal(short, `Smith, Alex. A Commentary, vol. ${number}`);
         assert.equal(c.normalizeBibliographyCitation(bibliography), bibliography, 'repeat formatting must be stable');
-        assert.equal(c.formatCitationHtml(bibliography), `Smith, Alex. <em>A Commentary</em>. Example Series, vol. ${number}. London: Example Press, 2000.`);
+        assert.equal(c.formatCitationHtml(bibliography, titleSpan(bibliography, 'A Commentary')), `Smith, Alex. <em>A Commentary</em>. Example Series, vol. ${number}. London: Example Press, 2000.`);
         assert.equal(c.normalizeFormalVolumeDetail(`Volume ${observed}`), `Vol. ${number}`);
         assert.equal(c.extractTrailingVolumeMarker(`A Commentary, Volume ${observed}`).marker, `vol. ${number}`);
         assert.equal(c.extractTitleEmbeddedVolumeDetail(`Collected Works: Volume ${observed}, Letters`).marker, `vol. ${number}`);
@@ -406,6 +417,7 @@ test('manual correction updates every HTML part and preview without new reads or
     assert.equal(fields.updateHtmlButton.disabled, false);
     fields.citation.change.call(fields.citation);
     assert.equal(fields.citation.value, corrected);
+    selectTitle(c, fields, 'My manually corrected title');
     assert.equal(c.updateGeneratedHtml(), true);
     const parts = vm.runInContext('generatedParts', c);
     assert.equal(parts.length, 3);
@@ -425,6 +437,7 @@ test('manual correction updates every HTML part and preview without new reads or
     let copied;
     c.navigator = { clipboard: { writeText: async text => { copied = text; } } };
     fields.citation.value = 'Clement of Alexandria. Writings. London: Example, 2000.';
+    selectTitle(c, fields, 'Writings');
     c.copyPart(0);
     await Promise.resolve();
     assert.ok(copied.includes('Clement of Alexandria. <em>Writings</em>.'));
@@ -493,4 +506,104 @@ test('successful scanner warnings reach the citation note as text without anothe
     assert.doesNotMatch(fields.citationSuggestionNote.innerHTML, /<uncertain>/);
     // New book resets Copy buttons, but must not rename Update HTML to Copy.
     assert.match(html, /id="updateHtmlButton" class="btn-update-html"/);
+});
+
+test('scanned title flows through the existing request into italics without parsing names', async () => {
+    const { context: c, fields } = formatter();
+    const title = 'God Who Creates: Essays in Honor of W. Sibley Towner';
+    const citation = `An ambiguous contributor. ${title}. London: Example, 2000.`;
+    fields.dropboxUrl.value = 'book';
+    c.showStatus = () => {};
+    c.getCitationPageNumbers = () => [1];
+    c.extractFrontMatterLines = c.renderFrontMatterImages = async () => [];
+    let requests = 0;
+    c.fetch = async () => {
+        requests++;
+        return { ok: true, json: async () => ({ source: 'ai', heading: citation, title }) };
+    };
+    await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book');
+    const actual = fields.citation.value;
+    assert.equal(requests, 1);
+    assert.match(c.formatCitationHtml(actual, c.getCitationTitleRange(actual)), /<em>God Who Creates: Essays in Honor of W\. Sibley Towner<\/em>/);
+    assert.equal(c.formatCitationHtml(actual), c.escapeHtml(actual), 'no explicit title means no heuristic italics');
+    for (const bad of ['', null, { title }, 'Missing Title', 'God who creates']) {
+        c.setScannedCitationTitle(actual, bad, 'book');
+        assert.equal(c.getCitationTitleRange(actual), null);
+    }
+});
+
+test('manual selection resolves repeated text and formatting-only edits refresh all parts and copies', async () => {
+    const { context: c, fields } = formatter();
+    c.fetch = c.requestHeadingSuggestion = c.pdfjsLib.getDocument = () => assert.fail('no request needed');
+    const citation = 'Augustine. Augustine. London: Example, 2000.';
+    fields.citation.value = citation;
+    fields.dropboxUrl.value = 'book';
+    c.setScannedCitationTitle(citation, 'Augustine', 'book');
+    assert.equal(c.getCitationTitleRange(citation), null, 'ambiguous repeated text stays plain');
+    const chapters = Array.from({ length: 31 }, (_, i) => ({ title: `Chapter ${i + 1}`, start: i + 1, end: i + 2 }));
+    c.generateOutput(citation, chapters, chapters.map((_, i) => ({ token: `synthetic-${i}` })), 40);
+    const links = vm.runInContext('generatedParts.map(p => p.html.match(/data-dtl-url="[^"]+"/g)).flat().join("|")', c);
+    selectTitle(c, fields, 'Augustine', citation.lastIndexOf('Augustine'));
+    assert.equal(fields.updateHtmlButton.disabled, false);
+    let copied;
+    c.navigator = { clipboard: { writeText: async text => { copied = text; } } };
+    await c.copyPart(0);
+    assert.match(copied, /Augustine\. <em>Augustine<\/em>\./);
+    for (const p of vm.runInContext('generatedParts', c)) assert.match(p.html, /Augustine\. <em>Augustine<\/em>\./);
+    c.clearCitationTitle();
+    assert.equal(fields.updateHtmlButton.disabled, false);
+    c.updateGeneratedHtml();
+    assert.doesNotMatch(fields.previewBox.innerHTML, /<em>/);
+    assert.equal(vm.runInContext('generatedParts.map(p => p.html.match(/data-dtl-url="[^"]+"/g)).flat().join("|")', c), links);
+    selectTitle(c, fields, 'Augustine', citation.lastIndexOf('Augustine'));
+    c.startNextBook();
+    assert.equal(c.getCitationTitleRange(citation, 'book'), null);
+});
+
+test('author and imprint edits preserve title; title or boundary edits invalidate rather than guess', () => {
+    const { context: c, fields } = formatter();
+    fields.dropboxUrl.value = 'book';
+    fields.citation.value = 'Alexandria, Clement of. Writings. London: Example, 2000.';
+    c.setScannedCitationTitle(fields.citation.value, 'Writings', 'book');
+    for (const citation of ['Clement of Alexandria. Writings. London: Example, 2000.', 'Clement of Alexandria. Writings. Paris: Example, 2001.']) {
+        fields.citation.value = citation;
+        fields.citation.input();
+        assert.match(c.formatCitationHtml(citation, c.getCitationTitleRange(citation)), /<em>Writings<\/em>/);
+    }
+    for (const title of ['New Writings', 'Writings: A Selection', 'Works']) {
+        fields.citation.value = 'Clement of Alexandria. Writings. Paris: Example, 2001.';
+        c.setScannedCitationTitle(fields.citation.value, 'Writings', 'book');
+        fields.citation.value = `Clement of Alexandria. ${title}. Paris: Example, 2001.`;
+        fields.citation.input();
+        assert.equal(c.getCitationTitleRange(fields.citation.value), null, title);
+    }
+    selectTitle(c, fields, 'Works');
+    fields.dropboxUrl.value = 'different-book';
+    assert.equal(c.getCitationTitleRange(fields.citation.value), null);
+});
+
+test('manual selection trims edge whitespace and escapes all selected content', () => {
+    const { context: c, fields } = formatter();
+    fields.citation.value = '  Author. 한국어 [English] & <script>title</script>.  ';
+    selectTitle(c, fields, ' 한국어 [English] & <script>title</script>');
+    const citation = fields.citation.value.trim();
+    assert.equal(c.formatCitationHtml(citation, c.getCitationTitleRange(citation)), 'Author. <em>한국어 [English] &amp; &lt;script&gt;title&lt;/script&gt;</em>.');
+    fields.citation.setSelectionRange(0, 0);
+    c.useSelectedCitationTitle();
+    assert.match(fields.citationTitleNote.textContent, /Highlight the title/);
+    assert.ok(c.getCitationTitleRange(citation), 'empty selection does not erase valid title');
+});
+
+test('clearing italics while the scanner is in flight remains a manual choice', async () => {
+    const { context: c, fields } = formatter();
+    fields.dropboxUrl.value = 'book';
+    c.showStatus = c.showCitationNote = () => {};
+    c.getCitationPageNumbers = () => [1];
+    c.extractFrontMatterLines = c.renderFrontMatterImages = async () => [];
+    c.requestHeadingSuggestion = async () => {
+        c.clearCitationTitle();
+        return { source: 'ai', heading: 'Clement of Alexandria. Writings.', title: 'Writings' };
+    };
+    await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book');
+    assert.equal(c.getCitationTitleRange(fields.citation.value), null);
 });

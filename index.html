@@ -591,8 +591,11 @@
                     <input type="text" id="citation" placeholder="Leave blank to fill from the PDF, or type your own citation">
                     <div id="citationSuggestionNote" class="field-note"></div>
                     <div class="next-book-row">
+                        <button type="button" class="btn-update-html" onclick="useSelectedCitationTitle()">Use selected text as title</button>
+                        <button type="button" class="btn-update-html" onclick="clearCitationTitle()">Clear italics</button>
                         <button type="button" id="updateHtmlButton" class="btn-update-html" onclick="updateGeneratedHtml()" disabled>Update HTML</button>
                     </div>
+                    <div id="citationTitleNote" class="field-note" style="display: block;" role="status" aria-live="polite">Italics use the scanned title. To correct them, highlight the title in Citation, choose Use selected text as title, then Update HTML.</div>
                     <div id="htmlUpdateNote" class="field-note" role="status" aria-live="polite"></div>
                 </div>
                 <div class="form-group">
@@ -666,6 +669,8 @@
 
         let generatedParts = [];
         let generatedBook = null;
+        let citationTitleRange = null;
+        let citationTitleRevision = 0;
         let autoFilledCitation = { value: '', sourceKey: '' };
         let autoFilledDerivedCitations = { footnote: '', short: '' };
         const FALLBACK_CITATION = 'Citation needed';
@@ -748,6 +753,7 @@
 
                 return {
                     heading: String(data.heading || '').trim(),
+                    title: typeof data.title === 'string' ? data.title.trim() : '',
                     source: data.source || 'worker',
                     note: data.note || ''
                 };
@@ -773,6 +779,7 @@
             showStatus('Reading PDF front matter and imprint pages for citation...');
             showCitationNote('Reading the first and final pages and filling the citation...');
             let scanNote = 'The metadata scan did not return a usable image reading.';
+            const titleRevision = citationTitleRevision;
 
             try {
                 const citationPages = getCitationPageNumbers(pdf, FRONT_MATTER_PAGE_LIMIT, BACK_MATTER_PAGE_LIMIT);
@@ -791,6 +798,9 @@
                     const citation = normalizeAutoFilledCitation(suggestion);
                     citationInput.value = citation;
                     markCitationAutoFilled(citation, sourceKey);
+                    if (titleRevision === citationTitleRevision) {
+                        setScannedCitationTitle(citation, workerSuggestion.title, sourceKey);
+                    }
                     fillDerivedCitationFields(citation);
                     showCitationNote('Citation read from the page images. ' + (workerSuggestion.note ||
                         'Please review all metadata fields before using the generated links.'), 'success');
@@ -825,6 +835,69 @@
             }));
         }
 
+        function getCitationTitleRange(citation, sourceKey = document.getElementById('dropboxUrl').value.trim()) {
+            return citationTitleRange && citationTitleRange.citation === citation &&
+                citationTitleRange.sourceKey === sourceKey ? citationTitleRange : null;
+        }
+
+        function setScannedCitationTitle(citation, title, sourceKey) {
+            const start = typeof title === 'string' && title ? citation.indexOf(title) : -1;
+            citationTitleRange = start >= 0 && start === citation.lastIndexOf(title)
+                ? { citation, start, end: start + title.length, sourceKey } : null;
+            updateCitationHtmlState();
+        }
+
+        function useSelectedCitationTitle() {
+            const input = document.getElementById('citation');
+            const raw = input.value;
+            let start = input.selectionStart;
+            let end = input.selectionEnd;
+            while (start < end && /\s/.test(raw[start])) start++;
+            while (end > start && /\s/.test(raw[end - 1])) end--;
+            if (!Number.isInteger(start) || !Number.isInteger(end) || start >= end) {
+                document.getElementById('citationTitleNote').textContent = 'Highlight the title in the Citation field first, then choose Use selected text as title.';
+                input.focus();
+                return;
+            }
+            const leading = raw.length - raw.trimStart().length;
+            citationTitleRange = { citation: raw.trim(), start: start - leading, end: end - leading,
+                sourceKey: document.getElementById('dropboxUrl').value.trim() };
+            citationTitleRevision++;
+            updateCitationHtmlState();
+        }
+
+        function clearCitationTitle() {
+            citationTitleRange = null;
+            citationTitleRevision++;
+            updateCitationHtmlState();
+        }
+
+        function citationTextEdited() {
+            const next = document.getElementById('citation').value.trim();
+            const range = citationTitleRange;
+            if (range && next !== range.citation) {
+                // Track an edit outside the selected title, never find a new
+                // title by parsing names or matching another occurrence.
+                const previous = range.citation;
+                let prefix = 0, suffix = 0;
+                while (prefix < Math.min(previous.length, next.length) && previous[prefix] === next[prefix]) prefix++;
+                while (suffix < Math.min(previous.length, next.length) - prefix &&
+                    previous[previous.length - 1 - suffix] === next[next.length - 1 - suffix]) suffix++;
+                if (prefix === previous.length - suffix && (prefix === range.start || prefix === range.end)) {
+                    citationTitleRange = null;
+                } else if (previous.length - suffix <= range.start) {
+                    const shift = next.length - previous.length;
+                    citationTitleRange = { ...range, citation: next, start: range.start + shift, end: range.end + shift };
+                } else if (prefix >= range.end) {
+                    citationTitleRange = { ...range, citation: next };
+                } else {
+                    citationTitleRange = null;
+                }
+            }
+            citationTitleRevision++;
+            updateCitationHtmlState();
+        }
+
         function updateNextBookButton() {
             const button = document.getElementById('startNextBookButton');
             if (!button) return;
@@ -834,13 +907,18 @@
         function updateCitationHtmlState() {
             const sourceChanged = generatedBook && document.getElementById('dropboxUrl').value.trim() !== generatedBook.sourceKey;
             const citation = document.getElementById('citation').value.trim();
-            const changed = generatedBook && citation !== generatedBook.citation;
+            const titleRange = getCitationTitleRange(citation);
+            const changed = generatedBook && (citation !== generatedBook.citation ||
+                JSON.stringify(titleRange) !== JSON.stringify(generatedBook.titleRange));
+            document.getElementById('citationTitleNote').textContent = titleRange
+                ? 'Italic title: ' + citation.slice(titleRange.start, titleRange.end) + '. Highlight a different span to change it; Update HTML applies it to all parts.'
+                : 'No title selected for italics. Highlight the title in Citation, choose Use selected text as title, then Update HTML. No scan needed.';
             document.getElementById('updateHtmlButton').disabled = !generatedBook || sourceChanged || !citation || !changed;
             const note = document.getElementById('htmlUpdateNote');
             note.textContent = !generatedBook ? '' : sourceChanged
                 ? 'Dropbox link changed. Generate Chapter Links for that book before updating its HTML.'
                 : !citation ? 'Enter a citation before updating or copying the HTML.'
-                : changed ? 'Citation edited. Click Update HTML to refresh all parts and the preview—no rescan needed.' : '';
+                : changed ? 'Citation or italics edited. Click Update HTML to refresh all parts and the preview—no rescan needed.' : '';
             note.style.display = note.textContent ? 'block' : 'none';
         }
 
@@ -851,7 +929,8 @@
                 updateCitationHtmlState();
                 return false;
             }
-            if (citation === generatedBook.citation) return true;
+            if (citation === generatedBook.citation &&
+                JSON.stringify(getCitationTitleRange(citation)) === JSON.stringify(generatedBook.titleRange)) return true;
             const { chapters, tokens, totalPages, sourceKey } = generatedBook;
             fillDerivedCitationFields(citation);
             generateOutput(citation, chapters, tokens, totalPages, sourceKey);
@@ -867,6 +946,8 @@
             generatedParts = [];
             generatedBook = null;
             clearCitationAutoFillState();
+            citationTitleRange = null;
+            citationTitleRevision++;
 
             document.getElementById('dropboxUrl').value = '';
             document.getElementById('citation').value = '';
@@ -2208,16 +2289,14 @@
             return /\b(university|college|press|publisher|publishers|committee|commission|council|association|society|church|ministry|department|office|institute|center|centre|library|museum)\b/i.test(cleanCitationText(text));
         }
 
-        function formatCitationHtml(citation) {
+        function formatCitationHtml(citation, titleRange = null) {
             const text = String(citation || '').trim();
-            const { authorText, titleText } = parseBibliographyCitation(text);
-            const start = titleText ? text.indexOf(titleText) : -1;
-            // Styling may wrap an exact title substring, never reconstruct or
-            // normalize a staff correction. Ambiguous parsing stays plain text.
-            if (!authorText || !titleText || containsNonLatinScript(titleText) ||
-                start < 0 || start !== text.lastIndexOf(titleText)) return escapeHtml(text);
-            return escapeHtml(text.slice(0, start)) + '<em>' + escapeHtml(titleText) + '</em>' +
-                escapeHtml(text.slice(start + titleText.length));
+            if (!titleRange || titleRange.citation !== text) return escapeHtml(text);
+            const { start, end } = titleRange;
+            if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 ||
+                end <= start || end > text.length) return escapeHtml(text);
+            return escapeHtml(text.slice(0, start)) + '<em>' + escapeHtml(text.slice(start, end)) + '</em>' +
+                escapeHtml(text.slice(end));
         }
 
         function splitFootnotePublicationDetails(publication) {
@@ -2660,9 +2739,9 @@
 </style>`;
         }
 
-        function buildWrapperOpen(citation, partNum, totalParts) {
+        function buildWrapperOpen(citation, partNum, totalParts, titleRange) {
             const suffix = totalParts > 1 ? ` (Part ${partNum} of ${totalParts})` : '';
-            const citationHtml = formatCitationHtml(citation);
+            const citationHtml = formatCitationHtml(citation, titleRange);
             return `
 <div class="dtl-chapters open">
   <div class="dtl-chapters-header" onclick="this.parentElement.classList.toggle('open')" tabindex="0" onkeydown="if(event.key==='Enter' || event.key===' ') { event.preventDefault(); this.click(); }">
@@ -2693,7 +2772,7 @@ function dtlOpenChapter(button) {
         /* ── Split chapters into parts of CHAPTERS_PER_PART each ── */
         const CHAPTERS_PER_PART = 30;
 
-        function splitIntoParts(citation, chapters, tokens) {
+        function splitIntoParts(citation, chapters, tokens, titleRange = null) {
             const liStrings = chapters.map((ch, i) => buildLiHtml(ch, tokens[i].token));
             const styleBlock = buildStyleBlock(citation);
             const totalParts = Math.ceil(chapters.length / CHAPTERS_PER_PART);
@@ -2704,7 +2783,7 @@ function dtlOpenChapter(button) {
                 const end = Math.min(start + CHAPTERS_PER_PART, chapters.length);
 
                 let html = styleBlock + '\n';
-                html += buildWrapperOpen(citation, p + 1, totalParts);
+                html += buildWrapperOpen(citation, p + 1, totalParts, titleRange);
                 for (let i = start; i < end; i++) {
                     html += liStrings[i];
                 }
@@ -2721,10 +2800,11 @@ function dtlOpenChapter(button) {
         }
 
         function generateOutput(citation, chapters, tokens, totalPages, sourceKey = document.getElementById('dropboxUrl').value.trim()) {
-            const parts = splitIntoParts(citation, chapters, tokens);
+            const titleRange = getCitationTitleRange(citation, sourceKey);
+            const parts = splitIntoParts(citation, chapters, tokens, titleRange);
             generatedParts = parts;
             // Only small link records are retained, not PDF bytes or credentials.
-            generatedBook = { citation, chapters, tokens, totalPages, sourceKey };
+            generatedBook = { citation, chapters, tokens, totalPages, sourceKey, titleRange };
             updateNextBookButton();
             updateCitationHtmlState();
 
@@ -2901,7 +2981,7 @@ function dtlOpenChapter(button) {
             updateCitationHtmlState();
         });
 
-        document.getElementById('citation').addEventListener('input', updateCitationHtmlState);
+        document.getElementById('citation').addEventListener('input', citationTextEdited);
         document.getElementById('dropboxUrl').addEventListener('input', updateCitationHtmlState);
 
         document.getElementById('citation').addEventListener('keypress', e => {
