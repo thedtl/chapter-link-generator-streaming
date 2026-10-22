@@ -259,6 +259,7 @@ test('unavailable or non-AI scans cannot silently become text-layer citations', 
         const citation = await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'source-book');
         assert.equal(citation, 'Citation needed', JSON.stringify(response));
         assert.equal(fields.citation.value, citation);
+        assert.equal(fields.citationPreview.textContent, citation);
         assert.equal(notes.at(-1).type, 'error');
         assert.match(notes.at(-1).message, /Chapter links will still be generated/);
         assert.match(notes.at(-1).message, /enter or correct the citation fields/);
@@ -463,6 +464,7 @@ test('empty citations, changed source and new book cannot reuse a stale HTML con
     c.startNextBook();
     assert.equal(vm.runInContext('generatedBook', c), null);
     assert.equal(fields.previewBox.innerHTML, '');
+    assert.equal(fields.citationPreview.textContent, 'Your formatted bibliography will appear here.');
     assert.equal(fields.updateHtmlButton.disabled, true);
 });
 
@@ -502,6 +504,7 @@ test('successful scanner warnings reach the citation note as text without anothe
     };
     await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book');
     assert.equal(requests, 1);
+    assert.equal(fields.citationPreview.innerHTML, c.formatCitationHtml(fields.citation.value));
     assert.match(fields.citationSuggestionNote.innerHTML, /Review name order: &lt;uncertain&gt;/);
     assert.doesNotMatch(fields.citationSuggestionNote.innerHTML, /<uncertain>/);
     // New book resets Copy buttons, but must not rename Update HTML to Copy.
@@ -524,6 +527,7 @@ test('scanned title flows through the existing request into italics without pars
     await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book');
     const actual = fields.citation.value;
     assert.equal(requests, 1);
+    assert.equal(fields.citationPreview.innerHTML, c.formatCitationHtml(actual, c.getCitationTitleRange(actual)));
     assert.match(c.formatCitationHtml(actual, c.getCitationTitleRange(actual)), /<em>God Who Creates: Essays in Honor of W\. Sibley Towner<\/em>/);
     assert.equal(c.formatCitationHtml(actual), c.escapeHtml(actual), 'no explicit title means no heuristic italics');
     for (const bad of ['', null, { title }, 'Missing Title', 'God who creates']) {
@@ -580,6 +584,31 @@ test('author and imprint edits preserve title; title or boundary edits invalidat
     selectTitle(c, fields, 'Works');
     fields.dropboxUrl.value = 'different-book';
     assert.equal(c.getCitationTitleRange(fields.citation.value), null);
+    assert.equal(fields.citationPreview.textContent, fields.citation.value);
+});
+
+test('bibliography preview updates before generating links, with exact title styling and escaped text', () => {
+    const { context: c, fields } = formatter();
+    c.fetch = c.requestHeadingSuggestion = c.pdfjsLib.getDocument = () => assert.fail('preview makes no request');
+    fields.citation.value = 'Clement of Alexandria. Collected Writings. London: Example, 2000.';
+    fields.citation.input();
+    assert.equal(fields.citationPreview.textContent, fields.citation.value);
+    assert.equal(vm.runInContext('generatedBook', c), null);
+    selectTitle(c, fields, 'Collected Writings');
+    assert.equal(fields.citationPreview.innerHTML, 'Clement of Alexandria. <em>Collected Writings</em>. London: Example, 2000.');
+    assert.equal(fields.updateHtmlButton.disabled, true, 'preview does not require generated HTML');
+    c.clearCitationTitle();
+    assert.equal(fields.citationPreview.innerHTML, fields.citation.value);
+    fields.citation.value = 'An Author. <script>Bad & Misread Title</script>.';
+    fields.citation.input();
+    selectTitle(c, fields, '<script>Bad & Misread Title</script>');
+    assert.equal(fields.citationPreview.innerHTML, 'An Author. <em>&lt;script&gt;Bad &amp; Misread Title&lt;/script&gt;</em>.');
+    const chapters = [{ title: 'One', start: 1, end: 2 }];
+    c.generateOutput(fields.citation.value, chapters, [{ token: 'synthetic' }], 2);
+    assert.ok(vm.runInContext('generatedParts[0].html', c).includes(fields.citationPreview.innerHTML));
+    fields.citation.value = '';
+    fields.citation.input();
+    assert.equal(fields.citationPreview.textContent, 'Your formatted bibliography will appear here.');
 });
 
 test('manual selection trims edge whitespace and escapes all selected content', () => {
@@ -606,4 +635,5 @@ test('clearing italics while the scanner is in flight remains a manual choice', 
     };
     await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book');
     assert.equal(c.getCitationTitleRange(fields.citation.value), null);
+    assert.equal(fields.citationPreview.textContent, fields.citation.value);
 });

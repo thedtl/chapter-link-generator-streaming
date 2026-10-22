@@ -122,3 +122,9 @@ Deployed source `1f50bd0` byte-matches GitHub Pages. Worker source `20c3569`
 is live as `891fec3a-d1a9-4834-89dc-ffa05e8f3b27` at 100%. All 88 combined
 checks pass; health/auth/CORS pass and runtime/binding metadata is unchanged.
 Browser clear/select/update/New Book checks used synthetic data only.
+
+Bibliography preview: a small live preview below Citation uses the exact same
+escaped title-span formatter as the copied HTML. It updates on typing, scan
+results, title selection/clearing and New Book, before any links are generated.
+It loads no PDF and makes no request. Update HTML still refreshes generated
+parts; Copy also applies pending edits. 40 generator checks pass.

@@ -247,6 +247,17 @@
         .field-note.error { color: var(--error); }
         .field-note.success { color: var(--success); }
 
+        .citation-preview {
+            margin-top: 12px;
+            padding: 14px 18px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            overflow-wrap: anywhere;
+        }
+        .citation-preview-label { margin-bottom: 6px; font-size: 12px; color: var(--gray-600); }
+        .citation-preview-text { font-size: 15px; font-weight: 600; line-height: 1.5; color: #333; }
+        .citation-preview-text.empty { font-weight: 400; color: var(--gray-600); }
+
         .metadata-label-row {
             display: flex;
             align-items: center;
@@ -597,6 +608,10 @@
                     </div>
                     <div id="citationTitleNote" class="field-note" style="display: block;" role="status" aria-live="polite">Italics use the scanned title. To correct them, highlight the title in Citation, choose Use selected text as title, then Update HTML.</div>
                     <div id="htmlUpdateNote" class="field-note" role="status" aria-live="polite"></div>
+                    <div class="citation-preview" role="region" aria-labelledby="citationPreviewLabel">
+                        <div id="citationPreviewLabel" class="citation-preview-label">Bibliography preview — updates as you edit</div>
+                        <div id="citationPreview" class="citation-preview-text empty">Your formatted bibliography will appear here.</div>
+                    </div>
                 </div>
                 <div class="form-group">
                     <div class="metadata-label-row">
@@ -688,6 +703,7 @@
                 document.getElementById('staffPassword').value = savedPassword;
                 document.getElementById('passwordSaved').style.display = 'inline-flex';
             }
+            updateCitationHtmlState();
         });
 
         document.getElementById('staffPassword').addEventListener('change', function() {
@@ -801,6 +817,7 @@
                     if (titleRevision === citationTitleRevision) {
                         setScannedCitationTitle(citation, workerSuggestion.title, sourceKey);
                     }
+                    updateCitationHtmlState();
                     fillDerivedCitationFields(citation);
                     showCitationNote('Citation read from the page images. ' + (workerSuggestion.note ||
                         'Please review all metadata fields before using the generated links.'), 'success');
@@ -817,6 +834,7 @@
             showCitationNote(`${scanNote} Citation not auto-filled. Chapter links will still be generated; enter or correct the citation fields, then click Update HTML.`, 'error');
             const fallbackCitation = citationInput.value.trim() || FALLBACK_CITATION;
             citationInput.value = fallbackCitation;
+            updateCitationHtmlState();
             return fallbackCitation;
         }
 
@@ -908,6 +926,10 @@
             const sourceChanged = generatedBook && document.getElementById('dropboxUrl').value.trim() !== generatedBook.sourceKey;
             const citation = document.getElementById('citation').value.trim();
             const titleRange = getCitationTitleRange(citation);
+            const preview = document.getElementById('citationPreview');
+            if (citation) preview.innerHTML = formatCitationHtml(citation, titleRange);
+            else preview.textContent = 'Your formatted bibliography will appear here.';
+            preview.classList.toggle('empty', !citation);
             const changed = generatedBook && (citation !== generatedBook.citation ||
                 JSON.stringify(titleRange) !== JSON.stringify(generatedBook.titleRange));
             document.getElementById('citationTitleNote').textContent = titleRange
