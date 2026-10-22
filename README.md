@@ -118,3 +118,7 @@ reuse it. Escaping preserves manual text, and chapter URLs/ranges stay unchanged
 No extra AI calls, PDF reads, signing requests, storage or model changes.
 39 generator checks and a synthetic browser select/clear/update check pass;
 these verify formatting, not fresh metadata-reading accuracy.
+Deployed source `1f50bd0` byte-matches GitHub Pages. Worker source `20c3569`
+is live as `891fec3a-d1a9-4834-89dc-ffa05e8f3b27` at 100%. All 88 combined
+checks pass; health/auth/CORS pass and runtime/binding metadata is unchanged.
+Browser clear/select/update/New Book checks used synthetic data only.
