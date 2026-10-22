@@ -30,6 +30,24 @@ Run the focused, PDF-free range checks with `node --test test-chapter-ranges.cjs
 
 ## Citation formatting
 
+Pending deployment (2026-10-22): edit Citation, then **Update HTML** to refresh
+every output part and the preview using the existing chapter links. Copy also
+refreshes a changed citation before copying. Replace the old HTML in LibGuides;
+the generator cannot change HTML already pasted elsewhere. No PDF rescan, token
+signing or metadata request is needed. Changed source URLs require generation
+for the new book, and New Book clears the old link context.
+
+Manual citation text is preserved, including edits made during an in-flight scan;
+HTML only escapes it and applies title italics where parsing is unambiguous.
+Manually edited footnote/short-display fields stay unchanged. Removed last-word
+surname inversion and speculative initial/particle-name repairs (including the
+old hardcoded de Vries repair): these tried to fix past errors but could corrupt
+valid names. Compound surnames and historical/locative names retain their supplied
+boundaries. Ambiguous multi-author footnotes preserve the creator heading rather
+than merge people; they remain editable. Scanner warnings now reach the form.
+34 PDF-free generator tests and a synthetic browser edit/update/New Book check
+pass. These checks do not establish fresh AI reading accuracy or scan latency.
+
 Released 2026-10-14: enforce consistent Chicago notes-and-bibliography volume and
 edition abbreviations in the existing formatter: `vol. 8`, `vol. 2A`, `Vol. 8`
 at a sentence boundary, `2nd ed.`, and `20th anniversary ed.` Letter suffixes

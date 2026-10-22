@@ -9,20 +9,27 @@ const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 const source = html.slice(html.indexOf('        const VIEWER_URL'), html.lastIndexOf('</script>'));
 function formatter() {
     const fields = {};
+    function element() {
+        return {
+            value: '', innerHTML: '', style: {}, dataset: {}, children: [],
+            classList: { add() {}, remove() {}, toggle() {} },
+            addEventListener(type, fn) { this[type] = fn; },
+            appendChild(child) { this.children.push(child); },
+            querySelector() { return this.pre ||= element(); },
+            focus() {},
+            get textContent() { return this.innerHTML.replace(/<[^>]*>/g, ''); },
+            set textContent(text) { this.innerHTML = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+        };
+    }
     const document = {
         addEventListener() {},
         getElementById(id) {
-            return fields[id] ||= { value: '', addEventListener(type, fn) { this[type] = fn; } };
+            return fields[id] ||= element();
         },
-        createElement() {
-            return {
-                innerHTML: '',
-                get textContent() { return this.innerHTML.replace(/<[^>]*>/g, ''); },
-                set textContent(text) { this.innerHTML = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-            };
-        }
+        createElement: element,
+        querySelectorAll() { return []; }
     };
-    const context = vm.createContext({ document, pdfjsLib: { GlobalWorkerOptions: {} } });
+    const context = vm.createContext({ document, pdfjsLib: { GlobalWorkerOptions: {} }, setTimeout() {}, clearTimeout() {} });
     vm.runInContext(source, context);
     return { context, fields };
 }
@@ -336,4 +343,154 @@ test('edition abbreviations retain qualifiers and punctuation in bibliography an
         assert.equal(c.normalizeBibliographyCitation(bibliography), bibliography);
         assert.equal(c.buildCitationVariantsFromBibliography(bibliography).footnote, `Alex Smith, A Book, ${noteEdition} (London: Example Press, 2000).`);
     }
+});
+
+test('complete compound surnames and historical names survive bibliography, note and HTML', () => {
+    const { context: c } = formatter();
+    for (const [creator, noteName] of [
+        ['García Márquez, Gabriel', 'Gabriel García Márquez'],
+        ['García Márquez, G.', 'G. García Márquez'],
+        ['Pérez García, María José', 'María José Pérez García'],
+        ['García y Vega, Ana', 'Ana García y Vega'],
+        ['de la Cruz, Juan', 'Juan de la Cruz'],
+        ['Clement of Alexandria', 'Clement of Alexandria'],
+        ['St. Augustine of Hippo', 'St. Augustine of Hippo'],
+        ['Augustine', 'Augustine'],
+        ['Gabriel García Márquez', 'Gabriel García Márquez'],
+        ['Clement of Alexandria and Basil of Caesarea', 'Clement of Alexandria and Basil of Caesarea'],
+        ['García Márquez, Gabriel, and María Pérez García', 'Gabriel García Márquez and María Pérez García'],
+        ['Smith, John, Jr.', 'John Smith Jr.'],
+    ]) {
+        const citation = `${creator.replace(/\.$/, '')}. Collected Writings. London: Example Press, 2000.`;
+        assert.equal(c.normalizeAutoFilledCitation(citation), citation);
+        const variants = c.buildCitationVariantsFromBibliography(citation);
+        assert.ok(variants.footnote.startsWith(noteName + ', Collected Writings'), variants.footnote);
+        assert.equal(variants.short, `${creator.replace(/\.$/, '')}. Collected Writings`);
+        assert.equal(c.formatCitationHtml(citation).replace(/<\/?em>/g, ''), citation);
+    }
+});
+
+test('ambiguous multi-author name headings remain intact rather than merging two people', () => {
+    const { context: c } = formatter();
+    for (const creators of [
+        'Clement of Alexandria, Basil of Caesarea, and Augustine',
+        'St. Augustine of Hippo, Clement of Alexandria, and Basil of Caesarea',
+        'John Smith, Mary Jones, and Jane Doe',
+        'John Smith, Mary Jones and Jane Doe',
+        'Pérez García, María José, and Ana López',
+        'Pérez García, María José, and Ana López, eds.',
+    ]) {
+        const citation = `${creators.replace(/\.$/, '')}. Collected Writings. London: Example Press, 2000.`;
+        assert.equal(c.normalizeAutoFilledCitation(citation), citation);
+        assert.equal(c.buildCitationVariantsFromBibliography(citation).footnote,
+            `${creators}, Collected Writings (London: Example Press, 2000).`);
+        assert.equal(c.formatCitationHtml(citation).replace(/<\/?em>/g, ''), citation);
+    }
+});
+
+test('manual correction updates every HTML part and preview without new reads or links', async () => {
+    const { context: c, fields } = formatter();
+    c.fetch = c.requestHeadingSuggestion = c.pdfjsLib.getDocument = () => assert.fail('no network or PDF read');
+    fields.dropboxUrl.value = 'https://www.dropbox.com/example-book';
+    fields.citation.value = reportedBibliography;
+    const chapters = Array.from({ length: 65 }, (_, i) => ({ title: `Chapter ${i + 1}`, start: i + 1, end: i + 2 }));
+    const tokens = chapters.map((_, i) => ({ token: `synthetic-token-${i}` }));
+    c.generateOutput(reportedBibliography, chapters, tokens, 100);
+    const beforeLinks = vm.runInContext('generatedParts.map(p => p.html.match(/data-dtl-url="[^"]+"/g)).flat().join("|")', c);
+    c.fillDerivedCitationFields(reportedBibliography);
+    fields.footnoteCitation.value = 'My manually corrected footnote';
+    fields.shortCitation.value = 'My manually corrected short line';
+    const corrected = 'García Márquez, Gabriel. My manually corrected title. Vol. 2A. Madrid: Example, 2000.';
+    fields.citation.value = corrected;
+    fields.citation.input.call(fields.citation);
+    assert.equal(fields.updateHtmlButton.disabled, false);
+    fields.citation.change.call(fields.citation);
+    assert.equal(fields.citation.value, corrected);
+    assert.equal(c.updateGeneratedHtml(), true);
+    const parts = vm.runInContext('generatedParts', c);
+    assert.equal(parts.length, 3);
+    for (const part of parts) {
+        assert.ok(part.html.includes('García Márquez, Gabriel. <em>My manually corrected title</em>. Vol. 2A.'));
+        assert.doesNotMatch(part.html, /Ward, W\. Reginald/);
+    }
+    const afterLinks = vm.runInContext('generatedParts.map(p => p.html.match(/data-dtl-url="[^"]+"/g)).flat().join("|")', c);
+    assert.equal(afterLinks, beforeLinks);
+    assert.equal(fields.previewBox.innerHTML, parts.map(p => p.html).join('\n'));
+    assert.equal(fields.footnoteCitation.value, 'My manually corrected footnote');
+    assert.equal(fields.shortCitation.value, 'My manually corrected short line');
+    assert.equal(fields.updateHtmlButton.disabled, true);
+    assert.match(fields.htmlUpdateNote.textContent, /Copy the updated part/);
+    assert.equal(await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', fields.dropboxUrl.value), corrected);
+    // Copy is safe even if the user overlooks Update HTML.
+    let copied;
+    c.navigator = { clipboard: { writeText: async text => { copied = text; } } };
+    fields.citation.value = 'Clement of Alexandria. Writings. London: Example, 2000.';
+    c.copyPart(0);
+    await Promise.resolve();
+    assert.ok(copied.includes('Clement of Alexandria. <em>Writings</em>.'));
+    assert.doesNotMatch(copied, /García Márquez/);
+});
+
+test('empty citations, changed source and new book cannot reuse a stale HTML context', () => {
+    const { context: c, fields } = formatter();
+    assert.equal(c.updateGeneratedHtml(), false);
+    fields.dropboxUrl.value = 'https://www.dropbox.com/first-book';
+    fields.citation.value = reportedBibliography;
+    c.generateOutput(reportedBibliography, [{ title: 'Chapter', start: 1, end: 5 }], [{ token: 'synthetic-token' }], 5);
+    fields.citation.value = '';
+    fields.citation.input();
+    assert.equal(fields.updateHtmlButton.disabled, true);
+    assert.equal(c.updateGeneratedHtml(), false);
+    fields.citation.value = 'Corrected citation';
+    fields.dropboxUrl.value = 'https://www.dropbox.com/different-book';
+    fields.dropboxUrl.input();
+    assert.equal(fields.updateHtmlButton.disabled, true);
+    assert.equal(c.updateGeneratedHtml(), false);
+    assert.match(fields.htmlUpdateNote.textContent, /Dropbox link changed/);
+    c.startNextBook();
+    assert.equal(vm.runInContext('generatedBook', c), null);
+    assert.equal(fields.previewBox.innerHTML, '');
+    assert.equal(fields.updateHtmlButton.disabled, true);
+});
+
+test('HTML styling never rewrites staff text or interprets it as markup', () => {
+    const { context: c } = formatter();
+    for (const citation of [
+        'Augustine. A title with unusual casing! London: Example, 2000',
+        'Pérez García, María José. Title. Series, volume 4A. My deliberately edited punctuation',
+        '<img src=x onerror=alert(1)> & "Manual citation"',
+    ]) {
+        assert.equal(c.formatCitationHtml(citation).replace(/<\/?em>/g, ''), c.escapeHtml(citation));
+    }
+});
+
+test('a manual correction made during scanning wins over the eventual response', async () => {
+    const { context: c, fields } = formatter();
+    c.showStatus = c.showCitationNote = () => {};
+    c.getCitationPageNumbers = () => [1];
+    c.extractFrontMatterLines = c.renderFrontMatterImages = async () => [];
+    c.requestHeadingSuggestion = async () => {
+        fields.citation.value = 'Clement of Alexandria. Collected Writings.';
+        return { source: 'ai', heading: reportedBibliography };
+    };
+    assert.equal(await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book'), fields.citation.value);
+    assert.equal(fields.citation.value, 'Clement of Alexandria. Collected Writings.');
+});
+
+test('successful scanner warnings reach the citation note as text without another request', async () => {
+    const { context: c, fields } = formatter();
+    let requests = 0;
+    c.showStatus = () => {};
+    c.getCitationPageNumbers = () => [1];
+    c.extractFrontMatterLines = c.renderFrontMatterImages = async () => [];
+    c.requestHeadingSuggestion = async () => {
+        requests++;
+        return { source: 'ai', heading: reportedBibliography, note: 'Review name order: <uncertain>' };
+    };
+    await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book');
+    assert.equal(requests, 1);
+    assert.match(fields.citationSuggestionNote.innerHTML, /Review name order: &lt;uncertain&gt;/);
+    assert.doesNotMatch(fields.citationSuggestionNote.innerHTML, /<uncertain>/);
+    // New book resets Copy buttons, but must not rename Update HTML to Copy.
+    assert.match(html, /id="updateHtmlButton" class="btn-update-html"/);
 });

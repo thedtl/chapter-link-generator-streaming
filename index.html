@@ -259,7 +259,7 @@
             margin-bottom: 0;
         }
 
-        .btn-copy-field {
+        .btn-copy-field, .btn-update-html {
             flex: 0 0 auto;
             padding: 6px 12px;
             font-size: 12px;
@@ -273,10 +273,12 @@
             color: var(--gray-700);
         }
 
-        .btn-copy-field:hover {
+        .btn-copy-field:hover, .btn-update-html:hover {
             background: var(--gray-50);
             border-color: var(--gray-400);
         }
+
+        .btn-update-html:disabled { opacity: 0.5; cursor: default; }
 
         .next-book-row {
             display: flex;
@@ -588,6 +590,10 @@
                     </div>
                     <input type="text" id="citation" placeholder="Leave blank to fill from the PDF, or type your own citation">
                     <div id="citationSuggestionNote" class="field-note"></div>
+                    <div class="next-book-row">
+                        <button type="button" id="updateHtmlButton" class="btn-update-html" onclick="updateGeneratedHtml()" disabled>Update HTML</button>
+                    </div>
+                    <div id="htmlUpdateNote" class="field-note" role="status" aria-live="polite"></div>
                 </div>
                 <div class="form-group">
                     <div class="metadata-label-row">
@@ -659,6 +665,7 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
         let generatedParts = [];
+        let generatedBook = null;
         let autoFilledCitation = { value: '', sourceKey: '' };
         let autoFilledDerivedCitations = { footnote: '', short: '' };
         const FALLBACK_CITATION = 'Citation needed';
@@ -668,8 +675,6 @@
         const CITATION_IMAGE_JPEG_QUALITY = 0.9;
         const NAME_CREDENTIAL_PATTERN = String.raw`(?:o\.?\s*f\.?\s*m\.?(?:\s*cap\.?)?|ofm\s*cap\.?|ofmcap|ofin\s*cap\.?|ofincap|s\.?\s*j\.?|o\.?\s*p\.?|o\.?\s*s\.?\s*b\.?|o\.?\s*c\.?\s*s\.?\s*o\.?|c\.?\s*s\.?\s*r\.?|s\.?\s*d\.?\s*b\.?|c\.?\s*s\.?\s*c\.?|ph\.?\s*d\.?|d\.?\s*phil\.?|m\.?\s*div\.?|th\.?\s*d\.?|d\.?\s*min\.?|ed\.?\s*d\.?|psy\.?\s*d\.?|s\.?\s*t\.?\s*d\.?|s\.?\s*t\.?\s*l\.?|j\.?\s*c\.?\s*d\.?|j\.?\s*d\.?|m\.?\s*d\.?|d\.?\s*d\.?|m\.?\s*s\.?\s*w\.?|l\.?\s*c\.?\s*s\.?\s*w\.?|l\.?\s*m\.?\s*s\.?\s*w\.?|m\.?\s*b\.?\s*a\.?|r\.?\s*n\.?|m\.\s*a\.|b\.\s*a\.|m\.\s*s\.|b\.\s*s\.)`;
         const COMMA_NAME_CREDENTIAL_PATTERN = String.raw`(?:${NAME_CREDENTIAL_PATTERN}|m\s*a|b\s*a|m\s*s|b\s*s)`;
-        const SURNAME_PARTICLE_WORD_SOURCE = String.raw`da|de|del|den|der|di|du|el|la|le|ten|ter|van|von`;
-        const SURNAME_PARTICLE_PATTERN = /^(?:da|de|del|den|der|di|du|el|la|le|ten|ter|van|von)$/i;
         const TITLE_LOWERCASE_WORD_PATTERN = /^(?:a|an|and|as|at|but|by|de|del|des|du|el|en|et|for|from|in|la|le|les|nor|of|on|or|para|par|por|the|to|un|une|with|y)$/i;
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -760,11 +765,9 @@
                 autoFilledCitation.sourceKey === sourceKey;
 
             if (existingCitation && !isExistingAutoFill) {
-                const citation = normalizeBibliographyCitation(existingCitation);
-                citationInput.value = citation;
-                fillDerivedCitationFields(citation);
+                fillDerivedCitationFields(existingCitation);
                 showCitationNote('');
-                return citation;
+                return existingCitation;
             }
 
             showStatus('Reading PDF front matter and imprint pages for citation...');
@@ -776,6 +779,12 @@
                 const lines = await extractFrontMatterLines(pdf, citationPages);
                 const images = await renderFrontMatterImages(pdf, citationPages);
                 const workerSuggestion = await requestHeadingSuggestion(staffPassword, lines, images);
+                // A correction typed while the scan was in flight still wins.
+                if (citationInput.value.trim() && citationInput.value.trim() !== existingCitation) {
+                    fillDerivedCitationFields(citationInput.value.trim());
+                    showCitationNote('Kept your manually entered citation.');
+                    return citationInput.value.trim();
+                }
                 const suggestion = workerSuggestion.source === 'ai' ? workerSuggestion.heading : '';
 
                 if (suggestion) {
@@ -783,7 +792,8 @@
                     citationInput.value = citation;
                     markCitationAutoFilled(citation, sourceKey);
                     fillDerivedCitationFields(citation);
-                    showCitationNote('Citation read from the page images. Please review all metadata fields before using the generated links.', 'success');
+                    showCitationNote('Citation read from the page images. ' + (workerSuggestion.note ||
+                        'Please review all metadata fields before using the generated links.'), 'success');
                     return citation;
                 }
 
@@ -794,8 +804,8 @@
                 console.warn('Citation extraction error:', error);
             }
 
-            showCitationNote(`${scanNote} Citation not auto-filled. Chapter links will still be generated; enter or correct the citation fields and generate again.`, 'error');
-            const fallbackCitation = normalizeBibliographyCitation(citationInput.value.trim()) || FALLBACK_CITATION;
+            showCitationNote(`${scanNote} Citation not auto-filled. Chapter links will still be generated; enter or correct the citation fields, then click Update HTML.`, 'error');
+            const fallbackCitation = citationInput.value.trim() || FALLBACK_CITATION;
             citationInput.value = fallbackCitation;
             return fallbackCitation;
         }
@@ -821,10 +831,41 @@
             button.disabled = generatedParts.length === 0;
         }
 
+        function updateCitationHtmlState() {
+            const sourceChanged = generatedBook && document.getElementById('dropboxUrl').value.trim() !== generatedBook.sourceKey;
+            const citation = document.getElementById('citation').value.trim();
+            const changed = generatedBook && citation !== generatedBook.citation;
+            document.getElementById('updateHtmlButton').disabled = !generatedBook || sourceChanged || !citation || !changed;
+            const note = document.getElementById('htmlUpdateNote');
+            note.textContent = !generatedBook ? '' : sourceChanged
+                ? 'Dropbox link changed. Generate Chapter Links for that book before updating its HTML.'
+                : !citation ? 'Enter a citation before updating or copying the HTML.'
+                : changed ? 'Citation edited. Click Update HTML to refresh all parts and the preview—no rescan needed.' : '';
+            note.style.display = note.textContent ? 'block' : 'none';
+        }
+
+        function updateGeneratedHtml() {
+            if (!generatedBook) return false;
+            const citation = document.getElementById('citation').value.trim();
+            if (document.getElementById('dropboxUrl').value.trim() !== generatedBook.sourceKey || !citation) {
+                updateCitationHtmlState();
+                return false;
+            }
+            if (citation === generatedBook.citation) return true;
+            const { chapters, tokens, totalPages, sourceKey } = generatedBook;
+            fillDerivedCitationFields(citation);
+            generateOutput(citation, chapters, tokens, totalPages, sourceKey);
+            const note = document.getElementById('htmlUpdateNote');
+            note.textContent = 'HTML updated. Copy the updated part(s) into LibGuides to replace the old HTML. No PDF rescan or new links.';
+            note.style.display = 'block';
+            return true;
+        }
+
         function startNextBook() {
             if (generatedParts.length === 0) return;
 
             generatedParts = [];
+            generatedBook = null;
             clearCitationAutoFillState();
 
             document.getElementById('dropboxUrl').value = '';
@@ -847,6 +888,7 @@
             document.getElementById('resultsCard').style.display = 'none';
 
             updateNextBookButton();
+            updateCitationHtmlState();
             document.getElementById('dropboxUrl').focus();
         }
 
@@ -873,7 +915,9 @@
             }
 
             generatedParts = [];
+            generatedBook = null;
             updateNextBookButton();
+            updateCitationHtmlState();
             showStatus('Loading PDF and extracting chapters...');
 
             try {
@@ -921,7 +965,8 @@
                     throw new Error(signData.error);
                 }
 
-                generateOutput(citation, chapters, signData.tokens, totalPages);
+                generateOutput(document.getElementById('citation').value.trim() || citation,
+                    chapters, signData.tokens, totalPages, dropboxUrl);
 
             } catch (error) {
                 console.error('Error:', error);
@@ -1286,33 +1331,12 @@
         }
 
         function cleanAuthorLine(text) {
-            return normalizeNameInitialSpacing(stripNameCredentials(repairSplitParticleSurnameAuthor(repairSplitInitialSurname(cleanFrontMatterLine(text)
+            return normalizeNameInitialSpacing(stripNameCredentials(cleanFrontMatterLine(text)
                 .replace(/^by\s+/i, '')
                 .replace(/^author\s*:\s*/i, '')
                 .replace(/^(?:지은이|저자|글쓴이|옮긴이|역자|번역)\s*[:：]?\s*/u, '')
-                .replace(/\s+(?:지음|저|著)\s*$/u, '')))))
+                .replace(/\s+(?:지음|저|著)\s*$/u, '')))
                 .trim();
-        }
-
-        function repairSplitInitialSurname(text) {
-            return cleanFrontMatterLine(text)
-                .replace(/\b([A-Z]\.?)\s+(?:and|&)\s+(\p{Lu}[\p{L}'’-]+)(?=\s*(?:$|[,.;:)]))/gu, '$1 $2');
-        }
-
-        function repairSplitParticleSurnameAuthor(text) {
-            const cleaned = cleanFrontMatterLine(text);
-            const particleSurnamePattern = String.raw`(?:[dD]['’]\p{Lu}[\p{L}'’-]+|(?:${SURNAME_PARTICLE_WORD_SOURCE})(?:\s+(?:${SURNAME_PARTICLE_WORD_SOURCE}))*\s+\p{Lu}[\p{L}'’-]+)`;
-            const particleAndGivenPattern = new RegExp(`\\b(${particleSurnamePattern})\\s+(?:and|&)\\s+(\\p{Lu}[\\p{L}'’-]+)(?=\\s*(?:$|[,.;:)]))`, 'giu');
-            return cleaned
-                .replace(/\bVries,\s+De,\s+(?:and|&)\s+(Robert)(?=\s*(?:$|[,.;:)]))/gu, 'de Vries, $1')
-                .replace(/\bDe\s+Vries,\s+(Robert)(?=\s*(?:$|[,.;:)]))/gu, 'de Vries, $1')
-                .replace(/\bDe\s+Vries\s+(?:and|&)\s+(Robert)(?=\s*(?:$|[,.;:)]))/gu, 'de Vries, $1')
-                .replace(/\b([dD]['’]\p{Lu}[\p{L}'’-]+)\s+(?:and|&)\s+(\p{Lu}[\p{L}'’-]+)(?=\s*(?:$|[,.;:)]))/gu, (match, surname, given) => {
-                    return `${normalizeSurnameParticleCasing(surname)}, ${given}`;
-                })
-                .replace(particleAndGivenPattern, (match, surname, given) => {
-                    return `${normalizeSurnameParticleCasing(surname)}, ${given}`;
-                });
         }
 
         function normalizeNameInitialSpacing(text) {
@@ -1321,23 +1345,6 @@
                 .replace(/\b([A-Z])\.\s+(?=([A-Z])\.(?:\s|$))/g, '$1. ');
         }
 
-        function normalizeSurnameParticleCasing(text) {
-            const words = cleanFrontMatterLine(text).split(/\s+/).filter(Boolean);
-            if (words.length === 0) return '';
-
-            return words.map((word, index) => {
-                if (/^[dD]['’]\p{L}/u.test(word)) {
-                    return word.replace(/^[dD](['’])(\p{L})/u, (match, apostrophe, letter) => {
-                        return `d${apostrophe}${letter.toLocaleUpperCase('fr')}`;
-                    });
-                }
-                if (!isSurnameParticleWord(word)) return word;
-                if (index === 0 && /^(?:la|le|el)$/i.test(word) && words.length === 2) {
-                    return capitalizeCmsWord(word);
-                }
-                return word.toLocaleLowerCase('fr');
-            }).join(' ');
-        }
 
         function cleanCitationText(text) {
             return cleanFrontMatterLine(text)
@@ -2048,8 +2055,8 @@
             const role = extractSharedCreatorRole(authorText);
             const roleToken = role.role;
             const formatted = roleToken
-                ? trimAuthorListForRole(formatChicagoAuthors(role.names))
-                : trimTerminalPunctuation(formatChicagoAuthors(role.names));
+                ? trimAuthorListForRole(formatCmsBibliographyAuthors(role.names))
+                : trimTerminalPunctuation(formatCmsBibliographyAuthors(role.names));
             return trimTerminalPunctuation(cleanCitationText([formatted, roleToken].filter(Boolean).join(', ')));
         }
 
@@ -2191,7 +2198,10 @@
                 return true;
             }
 
-            return !looksLikePersonalName(first);
+            // A one-word contributor is not automatically a book title. Use
+            // an immediately following imprint, not an assumed name shape.
+            return looksLikePublicationImprint(remainingSentences[0]) ||
+                looksLikeDirectResponsibilityLine(remainingSentences[0]);
         }
 
         function looksLikeCorporateAuthor(text) {
@@ -2199,21 +2209,15 @@
         }
 
         function formatCitationHtml(citation) {
-            const plainCitation = plainCitationText(citation);
-            const parts = parseBibliographyCitation(plainCitation);
-            if (!parts.authorText || !parts.titleText) {
-                return escapeHtml(plainCitation);
-            }
-            if (containsNonLatinScript(parts.titleText)) {
-                return escapeHtml(plainCitation);
-            }
-
-            const authorHtml = escapeHtml(punctuateCitation(trimTerminalPunctuation(parts.authorText)));
-            const titleHtml = '<em>' + escapeHtml(trimTerminalPunctuation(parts.titleText)) + '</em>';
-            const publicationHtml = parts.publication
-                ? ' ' + escapeHtml(punctuateCitation(trimTerminalPunctuation(parts.publication)))
-                : '';
-            return authorHtml + ' ' + titleHtml + '.' + publicationHtml;
+            const text = String(citation || '').trim();
+            const { authorText, titleText } = parseBibliographyCitation(text);
+            const start = titleText ? text.indexOf(titleText) : -1;
+            // Styling may wrap an exact title substring, never reconstruct or
+            // normalize a staff correction. Ambiguous parsing stays plain text.
+            if (!authorText || !titleText || containsNonLatinScript(titleText) ||
+                start < 0 || start !== text.lastIndexOf(titleText)) return escapeHtml(text);
+            return escapeHtml(text.slice(0, start)) + '<em>' + escapeHtml(titleText) + '</em>' +
+                escapeHtml(text.slice(start + titleText.length));
         }
 
         function splitFootnotePublicationDetails(publication) {
@@ -2281,6 +2285,17 @@
         }
 
         function bibliographyAuthorsToFootnote(authorText) {
+            const heading = extractSharedCreatorRole(authorText);
+            const conjunction = heading.names.search(/\s+(?:and|&)\s+/i);
+            const leadingPieces = (conjunction < 0 ? '' : heading.names.slice(0, conjunction))
+                .replace(/,\s*$/, '').split(/\s*,\s*/);
+            if (leadingPieces.length >= 2 && leadingPieces.slice(0, 2)
+                .every(piece => piece.split(/\s+/).filter(Boolean).length > 1)) {
+                // Two full names and an inverted compound surname can have
+                // identical punctuation. Keep the heading rather than merge
+                // two people or guess which words belong to a family name.
+                return [heading.names, heading.role].filter(Boolean).join(', ');
+            }
             const authors = splitBibliographyAuthors(authorText);
             const sharedRole = authors.length ? extractCreatorRoleSuffix(authors[authors.length - 1]).role : '';
             const noteAuthors = authors.map(author => extractCreatorRoleSuffix(author).name);
@@ -2355,7 +2370,12 @@
 
             const names = [];
             let index = 0;
-            if (pieces.length >= 2 && looksLikeInvertedAuthorPieces(pieces[0], pieces[1])) {
+            const firstComma = cleaned.indexOf(',');
+            const conjunction = cleaned.search(/\s+(?:and|&)\s+/i);
+            const explicitSurnameComma = firstComma >= 0 &&
+                (conjunction < 0 || firstComma < conjunction) &&
+                !/^,\s*(?:and|&)\s+/i.test(cleaned.slice(firstComma));
+            if (pieces.length >= 2 && explicitSurnameComma && looksLikeInvertedAuthorPieces(pieces[0], pieces[1])) {
                 names.push(`${pieces[0]}, ${pieces[1]}`);
                 index = 2;
             }
@@ -2402,26 +2422,8 @@
         function looksLikeInvertedAuthorPieces(lastName, givenNames) {
             const last = cleanFrontMatterLine(lastName);
             const given = cleanFrontMatterLine(givenNames);
-            if (!last || !given || /[.;:]/.test(last)) return false;
-            if (!looksLikeSurnamePiece(last)) return false;
-            return given.split(/\s+/).filter(Boolean).length <= 4;
-        }
-
-        function looksLikeSurnamePiece(text) {
-            const words = cleanFrontMatterLine(text).split(/\s+/).filter(Boolean);
-            if (words.length === 0 || words.length > 4) return false;
-            if (words.some(word => /\.$/.test(word))) return false;
-            if (words.length === 1) return /^\p{Lu}/u.test(words[0]) || looksLikeClosedParticleSurnameWord(words[0]);
-            if (words.slice(0, -1).every(isSurnameParticleWord) && /^\p{Lu}/u.test(words[words.length - 1])) return true;
-            return words.slice(0, -1).every(word => /^\p{Ll}/u.test(word)) && /^\p{Lu}/u.test(words[words.length - 1]);
-        }
-
-        function isSurnameParticleWord(word) {
-            return SURNAME_PARTICLE_PATTERN.test(cleanFrontMatterLine(word));
-        }
-
-        function looksLikeClosedParticleSurnameWord(word) {
-            return /^(?:d['’]\p{Lu}|du\p{Lu})/u.test(cleanFrontMatterLine(word));
+            return Boolean(last && given && !isCreatorRoleToken(given) && !isNameSuffixToken(given) &&
+                /^[\p{L}\p{M} .’'\-]+$/u.test(last) && /^[\p{L}\p{M} .’'\-]+$/u.test(given));
         }
 
         function looksLikePersonalName(name) {
@@ -2436,83 +2438,10 @@
         }
 
         function formatCmsBibliographyAuthors(author) {
-            const cleaned = cleanAuthorLine(author);
-            if (!cleaned) return '';
-
-            const names = splitAuthorNames(cleaned)
-                .map(name => normalizeContributorName(name))
-                .filter(Boolean);
-            if (names.length === 0) return '';
-
-            if (names.length > 10) {
-                const sharedRole = extractCreatorRoleSuffix(names[names.length - 1]).role;
-                const firstSeven = names.slice(0, 7).map(name => trimAuthorName(extractCreatorRoleSuffix(name).name));
-                const first = trimAuthorName(invertPersonalName(firstSeven[0]));
-                const rest = firstSeven.slice(1).map(trimAuthorName);
-                const authorList = [first, ...rest].filter(Boolean).join(', ') + ', et al' + (sharedRole ? ', ' + sharedRole : '');
-                return punctuateAuthorList(authorList);
-            }
-
-            return formatChicagoAuthors(cleaned);
-        }
-
-        function formatChicagoAuthors(author) {
-            const cleaned = cleanAuthorLine(author);
-            if (!cleaned) return '';
-
-            const names = splitAuthorNames(cleaned)
-                .map(name => normalizeContributorName(name))
-                .filter(Boolean);
-
-            if (names.length === 0) return '';
-
-            if (names.length === 1) {
-                return punctuateAuthorList(trimAuthorName(invertPersonalName(names[0])));
-            }
-
-            const first = trimAuthorName(invertPersonalName(names[0]));
-            const rest = names.slice(1).map(trimAuthorName);
-
-            let authorList = '';
-            if (rest.length === 1) {
-                authorList = first + ', and ' + rest[0];
-            } else {
-                authorList = first + ', ' + rest.slice(0, -1).join(', ') + ', and ' + rest[rest.length - 1];
-            }
-
-            return punctuateAuthorList(authorList);
-        }
-
-        function invertPersonalName(name) {
-            const cleaned = cleanFrontMatterLine(name);
-            if (!cleaned || cleaned.includes(',')) return cleaned;
-            if (containsNonLatinScript(cleaned)) return cleaned;
-
-            const particleSurname = invertKnownParticleSurnameName(cleaned);
-            if (particleSurname) return particleSurname;
-
-            const parts = cleaned.split(/\s+/);
-            if (parts.length < 2) return cleaned;
-
-            let suffix = '';
-            const normalizedSuffix = normalizeNameSuffixToken(parts[parts.length - 1] || '');
-            if (normalizedSuffix) {
-                suffix = normalizedSuffix;
-                parts.pop();
-            }
-
-            const last = parts.pop();
-            const given = parts.join(' ');
-            return last + ', ' + given + (suffix ? ', ' + suffix : '');
-        }
-
-        function invertKnownParticleSurnameName(name) {
-            const match = cleanFrontMatterLine(name).match(/^(.+?)\s+de\s+Vries$/iu);
-            if (!match) return '';
-
-            const given = cleanFrontMatterLine(match[1]);
-            if (!given || given.split(/\s+/).length > 4) return '';
-            return `de Vries, ${given}`;
+            // The reader supplies bibliography order. Word position/casing
+            // cannot establish a surname or divide a compound family name.
+            const cleaned = normalizeContributorName(cleanAuthorLine(author));
+            return cleaned ? punctuateAuthorList(cleaned) : '';
         }
 
         function containsNonLatinScript(text) {
@@ -2791,10 +2720,13 @@ function dtlOpenChapter(button) {
             return parts;
         }
 
-        function generateOutput(citation, chapters, tokens, totalPages) {
+        function generateOutput(citation, chapters, tokens, totalPages, sourceKey = document.getElementById('dropboxUrl').value.trim()) {
             const parts = splitIntoParts(citation, chapters, tokens);
             generatedParts = parts;
+            // Only small link records are retained, not PDF bytes or credentials.
+            generatedBook = { citation, chapters, tokens, totalPages, sourceKey };
             updateNextBookButton();
+            updateCitationHtmlState();
 
             // Result info
             document.getElementById('resultInfo').innerHTML =
@@ -2868,6 +2800,8 @@ function dtlOpenChapter(button) {
         }
 
         function copyPart(index, btnElement) {
+            // Never copy stale metadata just because Update HTML was overlooked.
+            if (!updateGeneratedHtml()) return;
             const code = generatedParts[index].html;
             navigator.clipboard.writeText(code).then(() => {
                 showCopyConfirm(index);
@@ -2962,11 +2896,13 @@ function dtlOpenChapter(button) {
         document.getElementById('citation').addEventListener('change', function() {
             if (this.value.trim()) {
                 autoFilledCitation = { value: '', sourceKey: '' };
-                const citation = normalizeBibliographyCitation(this.value.trim());
-                this.value = citation;
-                fillDerivedCitationFields(citation);
+                fillDerivedCitationFields(this.value.trim());
             }
+            updateCitationHtmlState();
         });
+
+        document.getElementById('citation').addEventListener('input', updateCitationHtmlState);
+        document.getElementById('dropboxUrl').addEventListener('input', updateCitationHtmlState);
 
         document.getElementById('citation').addEventListener('keypress', e => {
             if (e.key === 'Enter') document.getElementById('dropboxUrl').focus();
