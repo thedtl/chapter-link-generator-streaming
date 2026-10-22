@@ -30,7 +30,7 @@ Run the focused, PDF-free range checks with `node --test test-chapter-ranges.cjs
 
 ## Citation formatting
 
-Pending deployment (2026-10-22): edit Citation, then **Update HTML** to refresh
+Released 2026-10-22: edit Citation, then **Update HTML** to refresh
 every output part and the preview using the existing chapter links. Copy also
 refreshes a changed citation before copying. Replace the old HTML in LibGuides;
 the generator cannot change HTML already pasted elsewhere. No PDF rescan, token
@@ -47,6 +47,11 @@ boundaries. Ambiguous multi-author footnotes preserve the creator heading rather
 than merge people; they remain editable. Scanner warnings now reach the form.
 34 PDF-free generator tests and a synthetic browser edit/update/New Book check
 pass. These checks do not establish fresh AI reading accuracy or scan latency.
+Published source `dc96446` exactly matches the tested HTML. Streaming scanner
+source `90ce3bc` is live as Worker version `85fb013d-0e71-43fb-b0b3-379899a00728`.
+All 80 generator/Worker checks pass, including chapter transport/access controls.
+Health/auth/CORS pass; runtime and binding metadata are unchanged. No fresh AI
+scan, PDF access or changes to the original generator, reader or ToC services.
 
 Released 2026-10-14: enforce consistent Chicago notes-and-bibliography volume and
 edition abbreviations in the existing formatter: `vol. 8`, `vol. 2A`, `Vol. 8`
