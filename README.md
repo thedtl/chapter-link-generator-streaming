@@ -30,7 +30,7 @@ Run the focused, PDF-free range checks with `node --test test-chapter-ranges.cjs
 
 ## Citation formatting
 
-Pending 2026-10-23: restore surname-first for the first modern personal contributor
+Released 2026-10-23: restore surname-first for the first modern personal contributor
 in Short Display, using given/family-name boundaries from the existing metadata
 scan, not a last-word guess. Later contributors keep natural order; full citation,
 footnote and manual Short Display edits are unchanged. Compound surnames stay
@@ -39,7 +39,12 @@ mechanically inverted. Only an exact matching name can use the scan's boundaries
 The scanner's title contract explicitly includes the whole subtitle. A partial
 main-title match followed by a colon is no longer accepted for automatic italics;
 use the existing title-selection control if the returned fields disagree.
-43 PDF-free generator checks pass. No extra request, deployment or new scan.
+All 43 generator and 52 Worker checks pass. Published generator source `a63b622`
+byte-matches the tested HTML; scanner source `f0b27da` is live as Worker version
+`4ce14a2c-770d-4504-ba69-59e0a8da6e79` at 100%. Health, missing-password rejection
+and CORS pass; runtime/binding metadata is unchanged. The deployment check initially
+expected 403 instead of the existing 401 authentication contract; only that check
+was corrected. No extra request, fresh AI scan, PDF access or old-service change.
 
 Released 2026-10-22: edit Citation, then **Update HTML** to refresh
 every output part and the preview using the existing chapter links. Copy also
