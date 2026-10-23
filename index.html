@@ -812,7 +812,7 @@
                 const suggestion = workerSuggestion.source === 'ai' ? workerSuggestion.heading : '';
 
                 if (suggestion) {
-                    const citation = normalizeAutoFilledCitation(suggestion);
+                    const citation = normalizeAutoFilledCitation(suggestion, workerSuggestion.firstContributor);
                     citationInput.value = citation;
                     markCitationAutoFilled(citation, sourceKey, workerSuggestion.firstContributor);
                     if (titleRevision === citationTitleRevision) {
@@ -1464,14 +1464,15 @@
             return cleanCitationText(stripHtml(text));
         }
 
-        function normalizeBibliographyCitation(bibliography) {
+        function normalizeBibliographyCitation(bibliography, firstContributor = null) {
             if (bibliography === FALLBACK_CITATION) return FALLBACK_CITATION;
 
             const plainBibliography = normalizeAiCitationText(plainCitationText(bibliography));
             const parts = parseBibliographyCitation(plainBibliography);
             if (!parts.titleText) return plainBibliography;
 
-            const authorPart = parts.authorText ? formatCmsBibliographyAuthors(parts.authorText) : '';
+            const authorPart = parts.authorText
+                ? formatCmsBibliographyAuthors(surnameFirstContributor(parts.authorText, firstContributor)) : '';
             const titlePart = formatFormalCitationTitle(parts.titleText) + '.';
             const normalizedPublication = parts.publication ? normalizeBibliographyPublication(parts.publication) : '';
             const publicationPart = normalizedPublication ? punctuateCitation(normalizedPublication) : '';
@@ -1479,10 +1480,10 @@
             return cleanCitationText([authorPart, titlePart, publicationPart].filter(Boolean).join(' '));
         }
 
-        function normalizeAutoFilledCitation(bibliography) {
+        function normalizeAutoFilledCitation(bibliography, firstContributor = null) {
             const cleaned = normalizeAiCitationText(plainCitationText(bibliography));
             if (!cleaned || cleaned === FALLBACK_CITATION) return cleaned;
-            const normalized = normalizeBibliographyCitation(cleaned);
+            const normalized = normalizeBibliographyCitation(cleaned, firstContributor);
             return normalized && normalized !== FALLBACK_CITATION ? normalized : punctuateCitation(cleaned);
         }
 
@@ -1528,7 +1529,7 @@
                 return { footnote: plainBibliography, short: plainBibliography };
             }
 
-            const footnoteAuthors = bibliographyAuthorsToFootnote(parts.authorText);
+            const footnoteAuthors = bibliographyAuthorsToFootnote(parts.authorText, firstContributor);
             const titleText = formatFormalCitationTitle(parts.titleText || '');
             const footnotePublication = splitFootnotePublicationDetails(parts.publication);
             const footnoteDetails = normalizeFootnoteBookDetails(footnotePublication.details);
@@ -2160,26 +2161,31 @@
             return /\bthe\s+zohar\b/i.test(cleaned) || /ספר\s*ה(?:זוהר|זהר)/u.test(cleaned);
         }
 
-        function surnameFirstContributor(names, firstContributor) {
+        function matchObservedFirstContributor(names, firstContributor) {
             // Name boundaries come from the existing scan, never the last word.
             // Only reorder a complete matching name; do not repair staff edits
             // or replace a different person using stale scanner metadata.
             if (!firstContributor || !['givenNames', 'familyName', 'suffix']
-                .every(key => typeof firstContributor[key] === 'string')) return names;
+                .every(key => typeof firstContributor[key] === 'string')) return null;
             const { givenNames, familyName, suffix } = firstContributor;
-            if (!givenNames || !familyName || containsNonLatinScript(givenNames + familyName)) return names;
+            if (!givenNames || !familyName || containsNonLatinScript(givenNames + familyName)) return null;
             const natural = [givenNames, familyName, suffix].filter(Boolean).join(' ');
             const inverted = [familyName, givenNames, suffix].filter(Boolean).join(', ');
             for (const first of [inverted, natural]) {
                 const trimmed = trimTerminalPunctuation(first);
-                if (names === first || names === trimmed) return inverted;
+                if (names === first || names === trimmed) return { inverted, remaining: '', isInverted: first === inverted };
                 if (!names.startsWith(first)) continue;
                 const remaining = names.slice(first.length);
                 if (/^(?:,\s+|\s+(?:and|&)\s+)/i.test(remaining)) {
-                    return inverted + remaining.replace(/^\s+(and|&)\s+/i, ', $1 ');
+                    return { inverted, remaining, isInverted: first === inverted };
                 }
             }
-            return names;
+            return null;
+        }
+
+        function surnameFirstContributor(names, firstContributor) {
+            const match = matchObservedFirstContributor(names, firstContributor);
+            return match ? match.inverted + match.remaining.replace(/^\s+(and|&)\s+/i, ', $1 ') : names;
         }
 
         function formatShortDisplayCreators(authorText, firstContributor = null) {
@@ -2414,16 +2420,18 @@
                 .find(sentence => looksLikeResponsibilityRoleLine(sentence) && /\b(by|par)\b/i.test(sentence)) || '';
         }
 
-        function bibliographyAuthorsToFootnote(authorText) {
+        function bibliographyAuthorsToFootnote(authorText, firstContributor = null) {
             const heading = extractSharedCreatorRole(authorText);
+            const observedFirst = matchObservedFirstContributor(heading.names, firstContributor);
             const conjunction = heading.names.search(/\s+(?:and|&)\s+/i);
             const leadingPieces = (conjunction < 0 ? '' : heading.names.slice(0, conjunction))
                 .replace(/,\s*$/, '').split(/\s*,\s*/);
-            if (leadingPieces.length >= 2 && leadingPieces.slice(0, 2)
+            if (!observedFirst?.isInverted && leadingPieces.length >= 2 && leadingPieces.slice(0, 2)
                 .every(piece => piece.split(/\s+/).filter(Boolean).length > 1)) {
                 // Two full names and an inverted compound surname can have
                 // identical punctuation. Keep the heading rather than merge
-                // two people or guess which words belong to a family name.
+                // two people or guess a family name, unless the scan supplies
+                // the exact leading inverted name's boundary.
                 return [heading.names, heading.role].filter(Boolean).join(', ');
             }
             const authors = splitBibliographyAuthors(authorText);

@@ -30,6 +30,14 @@ Run the focused, PDF-free range checks with `node --test test-chapter-ranges.cjs
 
 ## Citation formatting
 
+2026-10-23 follow-up: apply the same observed first-contributor boundary to the
+automatically filled full bibliography, not just Short Display. Later names stay
+in natural order, as do footnotes; explicit compound-name evidence resolves the
+footnote ambiguity without guessing when that evidence is absent. Manual fields
+remain untouched. Title/subtitle italics are matched after name formatting.
+All 44 generator checks pass, including the scan-to-preview/HTML handoff. This is
+a browser-formatting change only: no extra scan or Worker change.
+
 Released 2026-10-23: restore surname-first for the first modern personal contributor
 in Short Display, using given/family-name boundaries from the existing metadata
 scan, not a last-word guess. Later contributors keep natural order; full citation,

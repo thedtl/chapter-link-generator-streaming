@@ -400,7 +400,7 @@ test('ambiguous multi-author name headings remain intact rather than merging two
     }
 });
 
-test('short display uses the observed first surname boundary, not the last word', () => {
+test('bibliography and short display use the observed first surname boundary, not the last word', () => {
     const { context: c } = formatter();
     for (const [name, givenNames, familyName, suffix, expected] of [
         ['Scott J. Hafemann', 'Scott J.', 'Hafemann', '', 'Hafemann, Scott J.'],
@@ -418,6 +418,10 @@ test('short display uses the observed first surname boundary, not the last word'
             assert.equal(result.short, `${expectedCreators}. Collected Writings`);
             assert.equal(result.footnote, original.footnote, 'short-line fix must not change footnotes');
             assert.equal(c.formatShortDisplayCreators(expected + role, first), expectedCreators);
+            const bibliography = c.normalizeAutoFilledCitation(citation, first);
+            assert.equal(bibliography, `${expectedCreators}. Collected Writings. London: Example, 2000.`);
+            assert.equal(c.normalizeAutoFilledCitation(bibliography, first), bibliography, 'already inverted names stay intact');
+            assert.equal(c.buildCitationVariantsFromBibliography(bibliography, first).footnote, original.footnote);
         }
     }
     const first = { givenNames: 'Scott J.', familyName: 'Hafemann', suffix: '' };
@@ -432,8 +436,29 @@ test('short display uses the observed first surname boundary, not the last word'
     for (const names of ['Clement of Alexandria', 'St. Augustine of Hippo', '박성덕 [Park Sung-deok]',
         'A Library Committee', 'Scott J. Hafemannson', 'Paul R. House']) {
         assert.equal(c.formatShortDisplayCreators(names, first), names);
+        const citation = `${names}, ed. Collected Writings. London: Example, 2000.`;
+        assert.equal(c.normalizeAutoFilledCitation(citation, first), citation, 'unrelated metadata cannot reorder the bibliography');
     }
     assert.equal(c.formatShortDisplayCreators('Gabriel García Márquez'), 'Gabriel García Márquez', 'no guessed surname boundary');
+});
+
+test('observed compound surnames stay whole in bibliography and return to natural order in notes', () => {
+    const { context: c } = formatter();
+    const first = { givenNames: 'María José', familyName: 'Pérez García', suffix: '' };
+    const title = 'Collected Writings: A Subtitle';
+    for (const rest of [' and Ana López', ', Ana López, and John Smith', ', Ana López, John Smith, and Mary Jones']) {
+        const citation = `María José Pérez García${rest}, eds. ${title}. London: Example, 2000.`;
+        const bibliography = c.normalizeAutoFilledCitation(citation, first);
+        const invertedCreators = `Pérez García, María José${rest.replace(/^ and /, ', and ')}, eds.`;
+        assert.equal(bibliography, `${invertedCreators} ${title}. London: Example, 2000.`);
+        const variants = c.buildCitationVariantsFromBibliography(bibliography, first);
+        assert.equal(variants.short, `${invertedCreators} ${title}`);
+        const noteCreators = rest.includes('Mary Jones') ? 'María José Pérez García et al.' : `María José Pérez García${rest}`;
+        assert.equal(variants.footnote, `${noteCreators}, eds., ${title} (London: Example, 2000).`);
+    }
+    const ambiguous = `Pérez García, María José, and Ana López, eds. ${title}. London: Example, 2000.`;
+    assert.equal(c.buildCitationVariantsFromBibliography(ambiguous).footnote,
+        `Pérez García, María José, and Ana López, eds., ${title} (London: Example, 2000).`, 'no new guess when name evidence is absent');
 });
 
 test('name order and full subtitle flow from one existing scan without overriding manual fields', async () => {
@@ -452,12 +477,17 @@ test('name order and full subtitle flow from one existing scan without overridin
     };
     await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book');
     assert.equal(requests, 1);
-    assert.equal(fields.citation.value, citation, 'do not rewrite the full citation for a short-line correction');
+    const bibliography = `Hafemann, Scott J., and Paul R. House, eds. ${title}.`;
+    assert.equal(fields.citation.value, bibliography);
     assert.equal(fields.shortCitation.value, `Hafemann, Scott J., and Paul R. House, eds. ${title}`);
-    assert.equal(fields.citationPreview.innerHTML, `Scott J. Hafemann and Paul R. House, eds. <em>${title}</em>.`);
+    assert.equal(fields.footnoteCitation.value, `Scott J. Hafemann and Paul R. House, eds., ${title}.`);
+    assert.equal(fields.citationPreview.innerHTML, `Hafemann, Scott J., and Paul R. House, eds. <em>${title}</em>.`);
+    c.generateOutput(bibliography, [{ title: 'Chapter', start: 1, end: 5 }], [{ token: 'synthetic-token' }], 5);
+    assert.ok(vm.runInContext('generatedParts[0].html', c).includes(fields.citationPreview.innerHTML));
     fields.citation.value = citation + ' London: Corrected Press, 2000.';
     fields.citation.input();
     fields.citation.change.call(fields.citation);
+    assert.equal(fields.citation.value, citation + ' London: Corrected Press, 2000.', 'manual bibliography stays exactly as entered');
     assert.equal(fields.shortCitation.value, `Hafemann, Scott J., and Paul R. House, eds. ${title}`);
     assert.equal(vm.runInContext('autoFilledCitation.value', c), '', 'manual citation cannot be overwritten by a rescan');
     fields.citation.value = `Paul R. House, ed. ${title}.`;
