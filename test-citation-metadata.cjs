@@ -400,6 +400,81 @@ test('ambiguous multi-author name headings remain intact rather than merging two
     }
 });
 
+test('short display uses the observed first surname boundary, not the last word', () => {
+    const { context: c } = formatter();
+    for (const [name, givenNames, familyName, suffix, expected] of [
+        ['Scott J. Hafemann', 'Scott J.', 'Hafemann', '', 'Hafemann, Scott J.'],
+        ['Gabriel García Márquez', 'Gabriel', 'García Márquez', '', 'García Márquez, Gabriel'],
+        ['María José Pérez García', 'María José', 'Pérez García', '', 'Pérez García, María José'],
+        ['Juan de la Cruz', 'Juan', 'de la Cruz', '', 'de la Cruz, Juan'],
+    ]) {
+        const first = { givenNames, familyName, suffix };
+        for (const role of ['', ', ed.', ', trans.', ', comp.', ', comm.']) {
+            const creators = `${name}${role}`.replace(/\.$/, '');
+            const citation = `${creators}. Collected Writings. London: Example, 2000.`;
+            const original = c.buildCitationVariantsFromBibliography(citation);
+            const result = c.buildCitationVariantsFromBibliography(citation, first);
+            const expectedCreators = `${expected}${role}`.replace(/\.$/, '');
+            assert.equal(result.short, `${expectedCreators}. Collected Writings`);
+            assert.equal(result.footnote, original.footnote, 'short-line fix must not change footnotes');
+            assert.equal(c.formatShortDisplayCreators(expected + role, first), expectedCreators);
+        }
+    }
+    const first = { givenNames: 'Scott J.', familyName: 'Hafemann', suffix: '' };
+    for (const name of ['John Smith Jr.', 'Smith, John, Jr.']) {
+        assert.equal(c.formatShortDisplayCreators(name, { givenNames: 'John', familyName: 'Smith', suffix: 'Jr.' }),
+            'Smith, John, Jr');
+    }
+    assert.equal(c.formatShortDisplayCreators('Scott J. Hafemann and Paul R. House, eds.', first),
+        'Hafemann, Scott J., and Paul R. House, eds');
+    assert.equal(c.formatShortDisplayCreators('Scott J. Hafemann, Paul R. House, and Mary Jones, eds.', first),
+        'Hafemann, Scott J., Paul R. House, and Mary Jones, eds');
+    for (const names of ['Clement of Alexandria', 'St. Augustine of Hippo', '박성덕 [Park Sung-deok]',
+        'A Library Committee', 'Scott J. Hafemannson', 'Paul R. House']) {
+        assert.equal(c.formatShortDisplayCreators(names, first), names);
+    }
+    assert.equal(c.formatShortDisplayCreators('Gabriel García Márquez'), 'Gabriel García Márquez', 'no guessed surname boundary');
+});
+
+test('name order and full subtitle flow from one existing scan without overriding manual fields', async () => {
+    const { context: c, fields } = formatter();
+    const title = 'Central Themes in Biblical Theology: Mapping Unity in Diversity';
+    const citation = `Scott J. Hafemann and Paul R. House, eds. ${title}.`;
+    fields.dropboxUrl.value = 'book';
+    c.showStatus = () => {};
+    c.getCitationPageNumbers = () => [1];
+    c.extractFrontMatterLines = c.renderFrontMatterImages = async () => [];
+    let requests = 0;
+    c.fetch = async () => {
+        requests++;
+        return { ok: true, json: async () => ({ source: 'ai', heading: citation, title,
+            firstContributor: { givenNames: 'Scott J.', familyName: 'Hafemann', suffix: '' } }) };
+    };
+    await c.fillCitationFromPdfIfNeeded({}, 'synthetic-password', 'book');
+    assert.equal(requests, 1);
+    assert.equal(fields.citation.value, citation, 'do not rewrite the full citation for a short-line correction');
+    assert.equal(fields.shortCitation.value, `Hafemann, Scott J., and Paul R. House, eds. ${title}`);
+    assert.equal(fields.citationPreview.innerHTML, `Scott J. Hafemann and Paul R. House, eds. <em>${title}</em>.`);
+    fields.citation.value = citation + ' London: Corrected Press, 2000.';
+    fields.citation.input();
+    fields.citation.change.call(fields.citation);
+    assert.equal(fields.shortCitation.value, `Hafemann, Scott J., and Paul R. House, eds. ${title}`);
+    assert.equal(vm.runInContext('autoFilledCitation.value', c), '', 'manual citation cannot be overwritten by a rescan');
+    fields.citation.value = `Paul R. House, ed. ${title}.`;
+    fields.citation.input();
+    fields.citation.change.call(fields.citation);
+    assert.equal(fields.shortCitation.value, `Paul R. House, ed. ${title}`, 'old name boundary cannot apply to another first contributor');
+    fields.shortCitation.value = 'My manual short line';
+    c.fillDerivedCitationFields(citation);
+    assert.equal(fields.shortCitation.value, 'My manual short line');
+    fields.shortCitation.value = '';
+    fields.dropboxUrl.value = 'another-book';
+    c.fillDerivedCitationFields(citation);
+    assert.equal(fields.shortCitation.value, `Scott J. Hafemann and Paul R. House, eds. ${title}`);
+    c.clearCitationAutoFillState();
+    assert.equal(vm.runInContext('autoFilledCitation.firstContributor', c), undefined);
+});
+
 test('manual correction updates every HTML part and preview without new reads or links', async () => {
     const { context: c, fields } = formatter();
     c.fetch = c.requestHeadingSuggestion = c.pdfjsLib.getDocument = () => assert.fail('no network or PDF read');
@@ -533,6 +608,29 @@ test('scanned title flows through the existing request into italics without pars
     for (const bad of ['', null, { title }, 'Missing Title', 'God who creates']) {
         c.setScannedCitationTitle(actual, bad, 'book');
         assert.equal(c.getCitationTitleRange(actual), null);
+    }
+});
+
+test('a main-title-only scanner field cannot silently italicize an incomplete subtitle span', () => {
+    const { context: c, fields } = formatter();
+    fields.dropboxUrl.value = 'book';
+    for (const [main, subtitle] of [
+        ['Central Themes in Biblical Theology', 'Mapping Unity in Diversity'],
+        ['God Who Creates', 'Essays in Honor of W. Sibley Towner'],
+    ]) {
+        const title = `${main}: ${subtitle}`;
+        const citation = `An Editor, ed. ${title}. A Publisher Series. London: Example, 2000.`;
+        fields.citation.value = citation;
+        c.setScannedCitationTitle(citation, main, 'book');
+        assert.equal(c.getCitationTitleRange(citation), null);
+        assert.doesNotMatch(fields.citationPreview.innerHTML, /<em>/);
+        assert.match(fields.citationTitleNote.textContent, /No title selected/);
+        c.setScannedCitationTitle(citation, title, 'book');
+        assert.equal(fields.citationPreview.innerHTML,
+            `An Editor, ed. <em>${title}</em>. A Publisher Series. London: Example, 2000.`);
+        // Existing manual correction also includes the subtitle, with no scan.
+        selectTitle(c, fields, title);
+        assert.equal(citation.slice(c.getCitationTitleRange(citation).start, c.getCitationTitleRange(citation).end), title);
     }
 });
 

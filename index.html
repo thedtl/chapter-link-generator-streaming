@@ -770,6 +770,7 @@
                 return {
                     heading: String(data.heading || '').trim(),
                     title: typeof data.title === 'string' ? data.title.trim() : '',
+                    firstContributor: data.firstContributor || null,
                     source: data.source || 'worker',
                     note: data.note || ''
                 };
@@ -813,7 +814,7 @@
                 if (suggestion) {
                     const citation = normalizeAutoFilledCitation(suggestion);
                     citationInput.value = citation;
-                    markCitationAutoFilled(citation, sourceKey);
+                    markCitationAutoFilled(citation, sourceKey, workerSuggestion.firstContributor);
                     if (titleRevision === citationTitleRevision) {
                         setScannedCitationTitle(citation, workerSuggestion.title, sourceKey);
                     }
@@ -838,8 +839,8 @@
             return fallbackCitation;
         }
 
-        function markCitationAutoFilled(citation, sourceKey) {
-            autoFilledCitation = { value: citation, sourceKey };
+        function markCitationAutoFilled(citation, sourceKey, firstContributor = null) {
+            autoFilledCitation = { value: citation, sourceKey, firstContributor };
         }
 
         function clearCitationAutoFillState() {
@@ -860,7 +861,10 @@
 
         function setScannedCitationTitle(citation, title, sourceKey) {
             const start = typeof title === 'string' && title ? citation.indexOf(title) : -1;
-            citationTitleRange = start >= 0 && start === citation.lastIndexOf(title)
+            // A main-title prefix is not a complete title/subtitle span. Do not
+            // silently present partial italics as correct; staff can select it.
+            const hasUnincludedSubtitle = start >= 0 && /^\s*[:：]/u.test(citation.slice(start + title.length));
+            citationTitleRange = start >= 0 && start === citation.lastIndexOf(title) && !hasUnincludedSubtitle
                 ? { citation, start, end: start + title.length, sourceKey } : null;
             updateCitationHtmlState();
         }
@@ -1498,7 +1502,9 @@
         function fillDerivedCitationFields(bibliography) {
             const footnoteInput = document.getElementById('footnoteCitation');
             const shortInput = document.getElementById('shortCitation');
-            const variants = buildCitationVariantsFromBibliography(bibliography);
+            const firstContributor = autoFilledCitation.sourceKey === document.getElementById('dropboxUrl').value.trim()
+                ? autoFilledCitation.firstContributor : null;
+            const variants = buildCitationVariantsFromBibliography(bibliography, firstContributor);
 
             if ((!footnoteInput.value.trim() || footnoteInput.value === autoFilledDerivedCitations.footnote) && variants.footnote) {
                 footnoteInput.value = variants.footnote;
@@ -1511,7 +1517,7 @@
             }
         }
 
-        function buildCitationVariantsFromBibliography(bibliography) {
+        function buildCitationVariantsFromBibliography(bibliography, firstContributor = null) {
             if (bibliography === FALLBACK_CITATION) {
                 return { footnote: FALLBACK_CITATION, short: FALLBACK_CITATION };
             }
@@ -1536,7 +1542,7 @@
                 footnoteAuthors,
                 titleAndImprint
             ].filter(Boolean).join(', ') + '.';
-            const shortAuthors = formatShortDisplayCreators(parts.authorText);
+            const shortAuthors = formatShortDisplayCreators(parts.authorText, firstContributor);
             const shortTitle = formatShortDisplayTitle(parts.titleText || '', footnotePublication.details);
             const short = [shortAuthors, shortTitle].filter(Boolean).join('. ');
 
@@ -2154,12 +2160,35 @@
             return /\bthe\s+zohar\b/i.test(cleaned) || /ספר\s*ה(?:זוהר|זהר)/u.test(cleaned);
         }
 
-        function formatShortDisplayCreators(authorText) {
+        function surnameFirstContributor(names, firstContributor) {
+            // Name boundaries come from the existing scan, never the last word.
+            // Only reorder a complete matching name; do not repair staff edits
+            // or replace a different person using stale scanner metadata.
+            if (!firstContributor || !['givenNames', 'familyName', 'suffix']
+                .every(key => typeof firstContributor[key] === 'string')) return names;
+            const { givenNames, familyName, suffix } = firstContributor;
+            if (!givenNames || !familyName || containsNonLatinScript(givenNames + familyName)) return names;
+            const natural = [givenNames, familyName, suffix].filter(Boolean).join(' ');
+            const inverted = [familyName, givenNames, suffix].filter(Boolean).join(', ');
+            for (const first of [inverted, natural]) {
+                const trimmed = trimTerminalPunctuation(first);
+                if (names === first || names === trimmed) return inverted;
+                if (!names.startsWith(first)) continue;
+                const remaining = names.slice(first.length);
+                if (/^(?:,\s+|\s+(?:and|&)\s+)/i.test(remaining)) {
+                    return inverted + remaining.replace(/^\s+(and|&)\s+/i, ', $1 ');
+                }
+            }
+            return names;
+        }
+
+        function formatShortDisplayCreators(authorText, firstContributor = null) {
             const role = extractSharedCreatorRole(authorText);
             const roleToken = role.role;
+            const names = surnameFirstContributor(role.names, firstContributor);
             const formatted = roleToken
-                ? trimAuthorListForRole(formatCmsBibliographyAuthors(role.names))
-                : trimTerminalPunctuation(formatCmsBibliographyAuthors(role.names));
+                ? trimAuthorListForRole(formatCmsBibliographyAuthors(names))
+                : trimTerminalPunctuation(formatCmsBibliographyAuthors(names));
             return trimTerminalPunctuation(cleanCitationText([formatted, roleToken].filter(Boolean).join(', ')));
         }
 
@@ -2997,7 +3026,7 @@ function dtlOpenChapter(button) {
 
         document.getElementById('citation').addEventListener('change', function() {
             if (this.value.trim()) {
-                autoFilledCitation = { value: '', sourceKey: '' };
+                autoFilledCitation.value = '';
                 fillDerivedCitationFields(this.value.trim());
             }
             updateCitationHtmlState();
